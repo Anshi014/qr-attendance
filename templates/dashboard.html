@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+</head>
+<body>
+    <h2>Welcome, {{ username }} ({{ role }})</h2>
+
+    {% if role in ['cr', 'incharge'] %}
+        <h3>📌 Generate QR for a subject:</h3>
+        <ul>
+            {% for subject in subjects %}
+                <li><a href="{{ url_for('generate_qr_route', subject=subject) }}">{{ subject }}</a></li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+{% if qr_image %}
+  <h3>Session ID: {{ session_id }}</h3>
+  <img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="200">
+{% endif %}
+
+    <br><a href="/logout">Logout</a>
+</body>
+</html>

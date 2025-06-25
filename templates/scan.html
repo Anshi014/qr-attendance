@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Scan Attendance</title>
+</head>
+<body>
+    <h2>Mark Your Attendance</h2>
+    <form action="/submit_attendance" method="POST">
+        <input type="text" name="name" placeholder="Your Name" required><br><br>
+        <input type="text" name="roll" placeholder="Roll Number" required><br><br>
+        <input type="hidden" name="subject" value="{{ subject }}">
+        <input type="hidden" name="session_id" value="{{ session_id }}">
+        <button type="submit">Submit Attendance</button>
+    </form>
+</body>
+</html>
