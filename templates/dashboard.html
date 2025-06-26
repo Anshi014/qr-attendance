@@ -1,24 +1,98 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Dashboard</title>
+    <meta charset="UTF-8">
+    <title>Dashboard | QR Attendance</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 700px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #fefefe;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+        }
+
+        h2, h3 {
+            text-align: center;
+        }
+
+        ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+
+        a {
+            text-decoration: none;
+            color: #0066cc;
+            font-weight: bold;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        img {
+            display: block;
+            margin: 20px auto;
+            border: 1px solid #999;
+            padding: 10px;
+            background-color: #fff;
+        }
+
+        .logout {
+            display: block;
+            text-align: center;
+            margin-top: 30px;
+        }
+    </style>
 </head>
 <body>
-    <h2>Welcome, {{ username }} ({{ role }})</h2>
+    <h2>Welcome, {{ username }} ({{ role | capitalize }})</h2>
 
     {% if role in ['cr', 'incharge'] %}
-        <h3>📌 Generate QR for a subject:</h3>
+        <h3>📌 Generate QR for a Subject</h3>
         <ul>
             {% for subject in subjects %}
                 <li><a href="{{ url_for('generate_qr_route', subject=subject) }}">{{ subject }}</a></li>
             {% endfor %}
         </ul>
     {% endif %}
-{% if qr_image %}
-  <h3>Session ID: {{ session_id }}</h3>
-  <img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="200">
-{% endif %}
 
-    <br><a href="/logout">Logout</a>
+    {% if role in ['cr', 'incharge'] %}
+    <h3>📤 Download Attendance</h3>
+    <ul>
+        {% for subject in subjects %}
+            <li><a href="{{ url_for('export_subject', subject=subject) }}">Download {{ subject }} Attendance</a></li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if qr_image %}
+        <h3>✅ QR Generated</h3>
+        <p style="text-align: center;">Session ID: <strong>{{ session_id }}</strong></p>
+        <img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="200" alt="QR Code">
+        
+        {% if role in ['cr', 'incharge'] %}
+        <div style="text-align: center; margin-top: 10px;">
+        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success">
+            📥 Download Attendance Report
+        </a>
+        </div>
+        {% endif %}
+    {% endif %}
+
+        <div style="text-align: center; margin-top: 10px;">
+        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success">
+            📥 Download Attendance Report
+        </a>
+    </div>
+
+    <a class="logout" href="/logout">🚪 Logout</a>
 </body>
 </html>

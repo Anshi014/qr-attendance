@@ -1,16 +1,114 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Scan Attendance</title>
+    <meta charset="UTF-8">
+    <title>Mark Attendance | QR System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 450px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f2f2f2;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+        }
+
+        h2 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 8px 0;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            margin-top: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            font-size: 1rem;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .note {
+            text-align: center;
+            font-size: 0.9rem;
+            margin-top: 15px;
+            color: #555;
+        }
+
+        #name-display {
+            font-weight: bold;
+            margin-top: 10px;
+        }
+    </style>
 </head>
 <body>
-    <h2>Mark Your Attendance</h2>
-    <form action="/submit_attendance" method="POST">
-        <input type="text" name="name" placeholder="Your Name" required><br><br>
-        <input type="text" name="roll" placeholder="Roll Number" required><br><br>
+    <h2>📝 Mark Your Attendance</h2>
+
+    <form method="POST" action="/submit_attendance">
         <input type="hidden" name="subject" value="{{ subject }}">
         <input type="hidden" name="session_id" value="{{ session_id }}">
-        <button type="submit">Submit Attendance</button>
+        <input type="hidden" name="device_id" id="device_id">
+
+        <label for="roll">Roll Number:</label>
+        <input type="text" name="roll" placeholder="e.g., 23BCAXXX" required>
+
+        <p id="name-display" style="font-weight: bold; color: green; margin-top: 10px;"></p>
+
+        <button type="submit">✅ Submit Attendance</button>
     </form>
+
+    <div class="note">
+        This device can mark attendance only once per subject.
+    </div>
+
+    <script>
+        let deviceID = localStorage.getItem("device_id");
+        if (!deviceID) {
+            deviceID = "dev-" + Math.random().toString(36).substring(2, 10);
+            localStorage.setItem("device_id", deviceID);
+        }
+        document.getElementById("device_id").value = deviceID;
+
+        function fetchName() {
+            const roll = document.getElementById("roll").value.trim();
+            if (!roll) return;
+
+            fetch("/get_name", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: "roll=" + encodeURIComponent(roll)
+            })
+            .then(response => response.text())
+            .then(data => {
+                const nameDisplay = document.getElementById("name-display");
+                if (data === "❌ Not found") {
+                    nameDisplay.textContent = "Roll number not found.";
+                    nameDisplay.style.color = "red";
+                } else {
+                    nameDisplay.textContent = "Name: " + data;
+                    nameDisplay.style.color = "green";
+                }
+            })
+            .catch(() => {
+                document.getElementById("name-display").textContent = "Error fetching name.";
+                document.getElementById("name-display").style.color = "red";
+            });
+        }
+    </script>
 </body>
 </html>

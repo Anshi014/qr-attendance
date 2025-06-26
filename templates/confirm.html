@@ -1,11 +1,47 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Attendance Confirmation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 500px;
+            margin: 60px auto;
+            padding: 20px;
+            background-color: #f4f6f8;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        h2 {
+            color: #2e7d32;
+            font-size: 1.8rem;
+        }
+
+        p {
+            font-size: 1.1rem;
+            color: #333;
+            margin-top: 20px;
+        }
+
+        a {
+            display: inline-block;
+            margin-top: 30px;
+            text-decoration: none;
+            color: #0066cc;
+            font-weight: bold;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
-    <h2>✅ Attendance Submitted</h2>
+    <h2>✅ Attendance Update</h2>
     <p>{{ message }}</p>
-    <a href="/scan">⬅️ Back to Scan Form</a>
+    <a href="/scan">⬅️ Scan Again</a>
 </body>
 </html>
