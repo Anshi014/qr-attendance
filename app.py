@@ -68,13 +68,6 @@ def submit_attendance():
     print("IP ADDRESS:", ip_address)
     print("DEVICE ID:", device_id)
 
-    try:
-        if has_already_submitted(subject, session_id, ip_address=ip_address):
-            return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
-    except Exception as e:
-        print("💥 Error in has_already_submitted:", e)
-        return "💥 Internal Server Error: " + str(e)
-
     # Check if roll exists
     if not roll_exists(roll):
         return render_template("confirm.html", message="❌ Roll number not found.")
@@ -89,7 +82,7 @@ def submit_attendance():
     name = result[0] if result else "Unknown"
 
     # ✅ BLOCK: Same roll cannot mark twice
-    if has_already_submitted(subject, session_id, device_id=device_id, roll=roll):
+    if has_already_submitted(subject, session_id, device_id=device_id):
         return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
 
     # ✅ BLOCK: Same device/IP can't mark for multiple rolls
