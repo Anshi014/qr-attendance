@@ -48,14 +48,14 @@ def generate_qr_route(subject):
 def scan():
     subject = request.args.get("subject", "")
     session_id = request.args.get("session_id", "")
+    roll = request.args.get("roll", "").strip().upper()
 
-    submitted_roll = session.get(f"submitted_for_{subject}_{session_id}")
-    if submitted_roll:
-        return render_template("confirm.html", message=f"❌ This device has already submitted attendance for Roll No: {submitted_roll}")
+    key = f"submitted_{subject}_{session_id}_{roll}"
+    if session.get(key):
+        return render_template("confirm.html", message="❌ This device already submitted for this student.")
 
-    return render_template("scan.html", subject=subject, session_id=session_id)
+    return render_template("scan.html", subject=subject, session_id=session_id, roll=roll)
 from database_logic import has_already_submitted, mark_attendance
-
 @app.route("/submit_attendance", methods=["POST"])
 def submit_attendance():
     roll = request.form["roll"].strip().upper()
@@ -63,30 +63,32 @@ def submit_attendance():
     session_id = request.form["session_id"]
     device_id = request.form.get("device_id")
     ip_address = request.remote_addr
-    
-    #check if roll exists in students table
+
+    # Check if roll exists
     if not roll_exists(roll):
-        return render_template("confirm.html",message="Roll number not found in student database.")
-    
-    #optional: Auto-fill name from DB
+        return render_template("confirm.html", message="❌ Roll number not found.")
+
+    # Get name from DB
     import sqlite3
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT name FROM students WHERE roll = ?",(roll,))
+    cursor.execute("SELECT name FROM students WHERE roll = ?", (roll,))
     result = cursor.fetchone()
     conn.close()
-    if result:
-        name = result[0]
+    name = result[0] if result else "Unknown"
 
-    if has_already_submitted(subject, device_id=device_id):
+    # ✅ BLOCK: Same roll cannot mark twice
+    if has_already_submitted(subject, session_id, device_id=device_id, roll=roll):
         return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
-    
-    if has_already_submitted(subject, ip_address=ip_address):
-        return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
-    # Load student list and validate roll
 
+    # ✅ BLOCK: Same device/IP can't mark for multiple rolls
+    #if has_already_submitted(subject, session_id, ip_address=ip_address):
+        return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
+
+    # ✅ Save attendance
     mark_attendance(subject, session_id, roll, name, device_id, ip_address)
     return render_template("confirm.html", message=f"✅ Attendance marked for {name} ({roll})")
+
 @app.route("/export/<subject>")
 def export_subject(subject):
     import pandas as pd
@@ -128,34 +130,47 @@ def show_students():
 def generate_report(subject, session_id):
     import pandas as pd
     import sqlite3
+    from datetime import datetime
+    import os
 
-    # Connect to DB
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
 
-    # Get full student list
+    # Print student list
     cursor.execute("SELECT roll, name FROM students")
     students = cursor.fetchall()
+    print("📋 Students:", students)
 
-    # Get attendees for this session
     cursor.execute("""
-        SELECT roll FROM attendance
+        SELECT roll, timestamp FROM attendance
         WHERE subject = ? AND session_id = ?
     """, (subject, session_id))
-    present_rolls = set(row[0] for row in cursor.fetchall())
+    present_data = {row[0].strip().upper(): row[1] for row in cursor.fetchall()}
+    print("🟢 Present data:", present_data)
 
     conn.close()
 
-    # Build DataFrame with 'P' or 'A'
+    if present_data:
+        first_timestamp = list(present_data.values())[0]
+        try:
+            date_str = datetime.strptime(first_timestamp, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+        except:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+    else:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+
     report = []
     for roll, name in students:
-        status = "P" if roll.strip().upper() in present_rolls else "A"
-        report.append({"Roll": roll, "Name": name, "Status": status})
+        roll_clean = roll.strip().upper()
+        status = "P" if roll_clean in present_data else "A"
+        print(f"➡️ {roll_clean}: {status}")
+        report.append({
+            "Roll": roll,
+            "Name": name,
+            date_str: status
+        })
 
     df = pd.DataFrame(report)
-
-    # Save Excel file
-    import os
     export_folder = "exports"
     os.makedirs(export_folder, exist_ok=True)
     filename = f"{subject}_{session_id}_report.xlsx"
@@ -163,6 +178,7 @@ def generate_report(subject, session_id):
     df.to_excel(filepath, index=False)
 
     return redirect(url_for("download_export", filename=filename))
+
 @app.route("/get_name", methods=["POST"])
 def get_name():
     roll = request.form["roll"].strip().upper()
@@ -174,6 +190,11 @@ def get_name():
     conn.close()
     return result[0] if result else "❌ Not found"
 
+@app.route("/refresh_students")
+def refresh_students():
+    from database_logic import seed_students_from_excel
+    seed_students_from_excel()
+    return "✅ Student list refreshed from Excel!"
 
 @app.route("/logout")
 def logout():

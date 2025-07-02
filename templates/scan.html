@@ -62,7 +62,7 @@
     <form method="POST" action="/submit_attendance">
         <input type="hidden" name="subject" value="{{ subject }}">
         <input type="hidden" name="session_id" value="{{ session_id }}">
-        <input type="hidden" name="device_id" id="device_id">
+        <input type="hidden" name="device_id" value="{{ request.cookies.get('device_id', '') }}>
 
         <label for="roll">Roll Number:</label>
         <input type="text" name="roll" placeholder="e.g., 23BCAXXX" required>

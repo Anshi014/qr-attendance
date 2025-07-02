@@ -26,21 +26,24 @@ def init_db():
     conn.commit()
     conn.close()
 
-def has_already_submitted(subject, device_id=None, ip_address=None):
+def has_already_submitted(subject, session_id, device_id=None, roll=None):
+    import sqlite3
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
 
-    if device_id:
-        cursor.execute("SELECT 1 FROM attendance WHERE subject=? AND device_id=?", (subject, device_id))
-    elif ip_address:
-        cursor.execute("SELECT 1 FROM attendance WHERE subject=? AND ip_address=?", (subject, ip_address))
-    else:
-        conn.close()
-        return False
+    # Check if this device already submitted for this roll in this session
+    if device_id and roll:
+        cursor.execute("""
+            SELECT 1 FROM attendance
+            WHERE subject = ? AND session_id = ? AND device_id = ? AND roll = ?
+        """, (subject, session_id, device_id, roll))
+        if cursor.fetchone():
+            conn.close()
+            return True
 
-    result = cursor.fetchone()
     conn.close()
-    return result is not None
+    return False
+
 
 def roll_exists(roll):
     conn = sqlite3.connect("attendance.db")
@@ -50,17 +53,23 @@ def roll_exists(roll):
     conn.close()
     return result is not None
 
+from datetime import datetime  # ✅ Make sure this is at top of file
+
 def mark_attendance(subject, session_id, roll, name, device_id, ip_address):
+    import sqlite3
+    from datetime import datetime  # optional if already imported above
+
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
+    
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     cursor.execute("""
         INSERT INTO attendance (subject, session_id, roll, name, device_id, ip_address, timestamp)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (subject, session_id, roll, name, device_id, ip_address, timestamp))
 
-    #Add this debug print here
-    print("Attendance save for:",roll, name)
+    print("✅ Attendance saved for:", roll, name)
     conn.commit()
     conn.close()
 
@@ -75,13 +84,28 @@ def load_student_list():
 def seed_students_from_excel():
     df = pd.read_excel("student_list.xlsx")
     df.rename(columns=lambda x: x.strip().lower(), inplace=True)  # ✅ Normalize column names
+    
+    df["roll"] = df["roll"].str.strip().str.upper()
+    df["name"] = df["name"].str.strip()
+
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
+    
+    #create table if not exists
+    cursor.execute("""
+                CREATE TABLE IF NOT EXISTS students (
+                roll TEXT PRIMARY KEY,
+                name TEXT
+                )
+    """)
+
+    #Insert or update students
     for _, row in df.iterrows():
-        cursor.execute(
-            "INSERT OR IGNORE INTO students (roll, name) VALUES (?, ?)",
-            (row["roll"].strip().upper(), row["name"])
-        )
+        cursor.execute("""
+            INSERT INTO students (roll, name) 
+            VALUES (?, ?)
+            ON CONFLICT(roll) DO UPDATE SET name = excluded.name
+        """, (row["roll"], row["name"]))
     conn.commit()
     conn.close()
 
