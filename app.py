@@ -83,7 +83,7 @@ def submit_attendance():
 
     # ✅ BLOCK: Same device/IP can't mark for multiple rolls
     #if has_already_submitted(subject, session_id, ip_address=ip_address):
-        return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
+        # return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
 
     # ✅ Save attendance
     mark_attendance(subject, session_id, roll, name, device_id, ip_address)
