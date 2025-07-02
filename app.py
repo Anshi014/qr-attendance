@@ -82,8 +82,8 @@ def submit_attendance():
         return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
 
     # ✅ BLOCK: Same device/IP can't mark for multiple rolls
-    #if has_already_submitted(subject, session_id, ip_address=ip_address):
-        # return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
+    if has_already_submitted(subject, session_id, ip_address=ip_address):
+        return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
 
     # ✅ Save attendance
     mark_attendance(subject, session_id, roll, name, device_id, ip_address)
@@ -146,6 +146,7 @@ def generate_report(subject, session_id):
         WHERE subject = ? AND session_id = ?
     """, (subject, session_id))
     present_data = {row[0].strip().upper(): row[1] for row in cursor.fetchall()}
+    present_rolls = set(present_data.keys())
     print("🟢 Present data:", present_data)
 
     conn.close()
@@ -162,8 +163,7 @@ def generate_report(subject, session_id):
     report = []
     for roll, name in students:
         roll_clean = roll.strip().upper()
-        status = "P" if roll_clean in present_data else "A"
-        print(f"➡️ {roll_clean}: {status}")
+        status = "P" if roll_clean in present_rolls else "A"
         report.append({
             "Roll": roll,
             "Name": name,
