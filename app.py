@@ -200,6 +200,46 @@ def refresh_students():
     seed_students_from_excel()
     return "✅ Student list refreshed from Excel!"
 
+@app.route("/full_report/<subject>")
+def full_report(subject):
+    import pandas as pd
+    import sqlite3
+    import os
+
+    conn = sqlite3.connect("attendance.db")
+    cursor = conn.cursor()
+
+    # Get full student list
+    cursor.execute("SELECT roll, name FROM students")
+    students = cursor.fetchall()
+
+    # Get all attendance data for this subject
+    cursor.execute("""
+        SELECT roll, DATE(timestamp) as date
+        FROM attendance
+        WHERE subject = ?
+    """, (subject,))
+    records = cursor.fetchall()
+    conn.close()
+
+    # Convert attendance to DataFrame
+    df = pd.DataFrame(records, columns=["Roll", "Date"])
+    df["Status"] = "P"
+
+    # Pivot date-wise report
+    pivot = df.pivot_table(index="Roll", columns="Date", values="Status", aggfunc="first", fill_value="A")
+
+    # Merge with student names
+    student_df = pd.DataFrame(students, columns=["Roll", "Name"])
+    final_df = pd.merge(student_df, pivot, on="Roll", how="left").fillna("A")
+
+    # Export
+    os.makedirs("exports", exist_ok=True)
+    filename = f"{subject}_full_report.xlsx"
+    final_df.to_excel(os.path.join("exports", filename), index=False)
+
+    return redirect(url_for("download_export", filename=filename))
+
 @app.route("/logout")
 def logout():
     session.pop("user", None)

@@ -68,7 +68,9 @@
     <h3>📤 Download Attendance</h3>
     <ul>
         {% for subject in subjects %}
-            <li><a href="{{ url_for('export_subject', subject=subject) }}">Download {{ subject }} Attendance</a></li>
+            <li><a href="{{ url_for('export_subject', subject=subject) }}"> {{ subject }} (Session-wise)</a><br>
+                <a href="{{ url_for('full_report', subject=subject) }}" style="font-size: 0.95em; color: green;"> {{ subject }} (Full Date-wise Report)</a>        
+            </li>        
         {% endfor %}
     </ul>
     {% endif %}
