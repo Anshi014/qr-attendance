@@ -3,98 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <title>Dashboard | QR Attendance</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
         body {
-            font-family: Arial, sans-serif;
-            max-width: 700px;
-            margin: 40px auto;
-            padding: 20px;
-            background-color: #fefefe;
-            border: 1px solid #ccc;
-            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(to bottom right, #d8f3ff, #e4f6f1);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
         }
-
-        h2, h3 {
+        .container {
+            background: #fff;
+            padding: 40px 30px;
+            border-radius: 16px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+            width: 400px;
             text-align: center;
         }
-
-        ul {
-            list-style-type: none;
-            padding-left: 0;
-        }
-
-        li {
+        h2 {
+            font-size: 28px;
             margin-bottom: 10px;
         }
-
-        a {
-            text-decoration: none;
-            color: #0066cc;
-            font-weight: bold;
+        h3 {
+            font-size: 18px;
+            margin: 25px 0 10px;
+            color: #135e4f;
         }
-
+        ul {
+            list-style: none;
+            padding: 0;
+            margin: 10px 0 20px;
+        }
+        li {
+            margin-bottom: 14px;
+        }
+        a {
+            color: #1363df;
+            text-decoration: none;
+            font-weight: 500;
+        }
         a:hover {
             text-decoration: underline;
         }
-
+        .green {
+            color: green;
+            font-size: 14px;
+            display: block;
+            margin-top: 4px;
+        }
+        .card-group {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .card {
+            background: #d4f0ff;
+            padding: 18px;
+            border-radius: 14px;
+            width: 48%;
+        }
+        .card span {
+            font-size: 24px;
+            display: block;
+            margin-bottom: 6px;
+        }
+        .card-title {
+            font-weight: 600;
+            font-size: 17px;
+        }
+        .btn-download {
+            background-color: #d9fdf5;
+            padding: 12px;
+            border-radius: 12px;
+            font-weight: 600;
+            color: #135e4f;
+            font-size: 16px;
+            display: inline-block;
+            margin-top: 10px;
+        }
         img {
             display: block;
             margin: 20px auto;
-            border: 1px solid #999;
+            border: 1px solid #ccc;
             padding: 10px;
-            background-color: #fff;
+            background: #fff;
         }
-
         .logout {
-            display: block;
-            text-align: center;
             margin-top: 30px;
+            display: block;
+            color: #d22;
         }
     </style>
 </head>
 <body>
-    <h2>Welcome, {{ username }} ({{ role | capitalize }})</h2>
+<div class="container">
+    <h2>👋 Welcome, incharge</h2>
 
     {% if role in ['cr', 'incharge'] %}
         <h3>📌 Generate QR for a Subject</h3>
+        <div class="card-group">
+            {% for subject in subjects %}
+                <div class="card">
+                    <span>📖</span>
+                    <div class="card-title">
+                        <a href="{{ url_for('generate_qr_route', subject=subject) }}">{{ subject }}</a>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if role in ['cr', 'incharge'] %}
+        <h3>📤 Download Attendance</h3>
+        <a href="#" class="btn-download">📁 Download Attendance</a>
+
+        <h3>📄 Reports</h3>
         <ul>
             {% for subject in subjects %}
-                <li><a href="{{ url_for('generate_qr_route', subject=subject) }}">{{ subject }}</a></li>
+                <li>
+                    <a href="{{ url_for('export_subject', subject=subject) }}">{{ subject }} (Session-wise)</a>
+                    <a href="{{ url_for('full_report', subject=subject) }}" class="green">{{ subject }} (Full Date-wise Report)</a>
+                </li>
             {% endfor %}
         </ul>
     {% endif %}
 
-    {% if role in ['cr', 'incharge'] %}
-    <h3>📤 Download Attendance</h3>
-    <ul>
-        {% for subject in subjects %}
-            <li><a href="{{ url_for('export_subject', subject=subject) }}"> {{ subject }} (Session-wise)</a><br>
-                <a href="{{ url_for('full_report', subject=subject) }}" style="font-size: 0.95em; color: green;"> {{ subject }} (Full Date-wise Report)</a>        
-            </li>        
-        {% endfor %}
-    </ul>
-    {% endif %}
-
     {% if qr_image %}
         <h3>✅ QR Generated</h3>
-        <p style="text-align: center;">Session ID: <strong>{{ session_id }}</strong></p>
         <img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="200" alt="QR Code">
-        
         {% if role in ['cr', 'incharge'] %}
-        <div style="text-align: center; margin-top: 10px;">
-        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success">
-            📥 Download Attendance Report
-        </a>
-        </div>
+            <div>
+                <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn-download">
+                    📥 Download Attendance Report
+                </a>
+            </div>
         {% endif %}
     {% endif %}
 
-        <div style="text-align: center; margin-top: 10px;">
-        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success">
-            📥 Download Attendance Report
-        </a>
-    </div>
-
     <a class="logout" href="/logout">🚪 Logout</a>
+</div>
 </body>
 </html>
