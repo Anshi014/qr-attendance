@@ -68,21 +68,11 @@
         display: block;
         margin-bottom: 10px;
     }
-    .roles {
-        margin-top: 20px;
-        font-size: 16px;
-        font-weight: bold;
-    }
 </style>
 </head>
 <body>
 <div class="container">
     <h2>Welcome, {{ role }}</h2>
-    <div class="roles">
-        Roles Assigned:
-        {% if 'incharge' in roles %}<span class="green">✔ Incharge</span>{% endif %}
-        {% if 'cr' in roles %}<span class="blue">✔ CR</span>{% endif %}
-    </div>
 
     <h3>📌 <strong>Generate QR for a Subject</strong></h3>
     <div class="subject-row">
