@@ -1,102 +1,73 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Dashboard</title>
-<style>
-    body {
-        font-family: Arial, sans-serif;
-        background: linear-gradient(to bottom right, #d0f0c0, #a2d5f2);
-        padding: 40px;
-        text-align: center;
-    }
-    h2 {
-        font-size: 24px;
-        font-weight: bold;
-    }
-    h3 {
-        font-size: 18px;
-        margin-top: 30px;
-    }
-    a {
-        display: block;
-        margin: 5px;
-        font-size: 16px;
-        text-decoration: none;
-    }
-    .green {
-        color: green;
-        font-weight: 500;
-    }
-    .blue {
-        color: #1a0dab;
-        font-weight: 500;
-    }
-    .logout {
-        margin-top: 20px;
-        font-weight: bold;
-        color: #d2691e;
-        font-size: 16px;
-    }
-    .container {
-        border: 1px solid #ccc;
-        padding: 30px;
-        border-radius: 8px;
-        display: inline-block;
-        text-align: left;
-        background-color: white;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    }
-    .subject-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 20px;
-    }
-    .subject-block {
-        background-color: #e0f7fa;
-        padding: 15px;
-        border-radius: 10px;
-        flex: 1;
-        text-align: center;
-    }
-    .subject-block a {
-        font-size: 18px;
-        font-weight: bold;
-    }
-    .subject-block span {
-        font-size: 24px;
-        display: block;
-        margin-bottom: 10px;
-    }
+<!DOCTYPE html> 
+<html lang="en"> 
+    <head> 
+        <meta charset="UTF-8"> 
+        <title>Dashboard | QR Attendance</title> 
+        <style> body { font-family: Arial, sans-serif; 
+        max-width: 700px; 
+        margin: 40px auto; 
+        padding: 20px; 
+        background-color: #74d8f6; 
+        border: 1px solid #ccc; 
+        border-radius: 8px; }
+h2, h3 { text-align: center; }
+ul { list-style-type: none; padding-left: 0; }
+li { margin-bottom: 10px; } 
+a { text-decoration: none; 
+    color: #0066cc; 
+    font-weight: bold; }
+a:hover { 
+    text-decoration: underline; }
+img { display: block; 
+    margin: 20px auto; 
+    border: 1px solid #999; 
+    padding: 10px; 
+    background-color:#72e0ec; }
+.logout { 
+    display: block; 
+    text-align: center; 
+    margin-top: 30px; }
 </style>
 </head>
 <body>
 <div class="container">
-    <h2>Welcome, {{ role }}</h2>
+    <h2>Welcome, {{ username }} ({{ role | capitalize }})</h2> 
+    {% if role in ['cr', 'incharge'] %} 
+    <h3>📌 Generate QR for a Subject</h3> 
+    <ul> 
+        {% for subject in subjects %} 
+        <li><a href="{{ url_for('generate_qr_route', subject=subject) }}">{{ subject }}</a></li> 
+        {% endfor %} 
+    </ul> 
+    {% endif %}
 
-    <h3>📌 <strong>Generate QR for a Subject</strong></h3>
-    <div class="subject-row">
-        <div class="subject-block">
-            <span>📖</span>
-            <a class="blue" href="{{ url_for('generate_qr_route', subject='AI') }}">AI</a>
-        </div>
-        <div class="subject-block">
-            <span>📖</span>
-            <a class="blue" href="{{ url_for('generate_qr_route', subject='Python') }}">Python</a>
-        </div>
-    </div>
-
-    <h3>📥 <strong>Download Attendance</strong></h3>
-    <!-- AI Reports -->
-    <a class="blue" href="{{ url_for('export_subject', subject='AI') }}">AI (Session-wise)</a>
-    <a class="green" href="{{ url_for('full_report', subject='AI') }}">AI (Full Date-wise Report)</a>
-
-    <!-- Python Reports -->
-    <a class="blue" href="{{ url_for('export_subject', subject='Python') }}">Python (Session-wise)</a>
-    <a class="green" href="{{ url_for('full_report', subject='Python') }}">Python (Full Date-wise Report)</a>
-
-    <br>
-    <a href="{{ url_for('logout') }}" class="logout">📦 Logout</a>
-</div>
-</body>
-</html>
+    {% if role in ['cr', 'incharge'] %} 
+    <h3>📤 Download Attendance</h3> 
+    <ul> 
+        {% for subject in subjects %} 
+        <li><a href="{{ url_for('export_subject', subject=subject) }}"> {{ subject }} (Session-wise)</a><br> 
+            <a href="{{ url_for('full_report', subject=subject) }}" style="font-size: 0.95em; color: green;"> {{ subject }} (Full Date-wise Report)</a> 
+        </li> 
+        {% endfor %} 
+    </ul> 
+    {% endif %}
+    {% if qr_image %} 
+    <h3>✅ QR Generated</h3> 
+    <p style="text-align: center;">Session ID: <strong>{{ session_id }}</strong></p> 
+    <img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="200" alt="QR Code">
+    {% if role in ['cr', 'incharge'] %} 
+    <div style="text-align: center; margin-top: 10px;"> 
+        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success"> 
+            📥 Download Attendance Report 
+        </a> 
+    </div> 
+    {% endif %} 
+    {% endif %}
+    <div style="text-align: center; margin-top: 10px;"> 
+        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success"> 
+            📥 Download Attendance Report 
+        </a> 
+    </div> 
+    <a class="logout" href="/logout">🚪 Logout</a> 
+</body> 
+    </html>
