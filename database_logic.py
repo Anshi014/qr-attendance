@@ -26,24 +26,31 @@ def init_db():
     conn.commit()
     conn.close()
 
-def has_already_submitted(subject, session_id, device_id=None, roll=None):
+def has_already_submitted(subject, session_id, device_id=None, ip_address=None):
     import sqlite3
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
 
-    # Check if this device already submitted for this roll in this session
-    if device_id and roll:
+    if device_id:
         cursor.execute("""
             SELECT 1 FROM attendance
-            WHERE subject = ? AND session_id = ? AND device_id = ? AND roll = ?
-        """, (subject, session_id, device_id, roll))
+            WHERE subject = ? AND session_id = ? AND device_id = ?
+        """, (subject, session_id, device_id))
+        if cursor.fetchone():
+            conn.close()
+            return True
+
+    if ip_address:
+        cursor.execute("""
+            SELECT 1 FROM attendance
+            WHERE subject = ? AND session_id = ? AND ip_address = ?
+        """, (subject, session_id, ip_address))
         if cursor.fetchone():
             conn.close()
             return True
 
     conn.close()
     return False
-
 
 def roll_exists(roll):
     conn = sqlite3.connect("attendance.db")
