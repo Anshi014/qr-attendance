@@ -63,6 +63,17 @@ def submit_attendance():
     session_id = request.form["session_id"]
     device_id = request.form.get("device_id")
     ip_address = request.remote_addr
+    
+    print("ROLL:", roll)
+    print("IP ADDRESS:", ip_address)
+    print("DEVICE ID:", device_id)
+
+    try:
+        if has_already_submitted(subject, session_id, ip_address=ip_address):
+            return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
+    except Exception as e:
+        print("💥 Error in has_already_submitted:", e)
+        return "💥 Internal Server Error: " + str(e)
 
     # Check if roll exists
     if not roll_exists(roll):
