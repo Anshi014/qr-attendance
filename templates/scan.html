@@ -9,7 +9,7 @@
             max-width: 450px;
             margin: 50px auto;
             padding: 20px;
-            background-color: #f2f2f2;
+            background: linear-gradient(to bottom right, #d0f0c0, #a2d5f2);
             border: 1px solid #ccc;
             border-radius: 10px;
         }
@@ -62,10 +62,10 @@
     <form method="POST" action="/submit_attendance">
         <input type="hidden" name="subject" value="{{ subject }}">
         <input type="hidden" name="session_id" value="{{ session_id }}">
-        <input type="hidden" name="device_id" value="{{ request.cookies.get('device_id', '') }}>
+        <input type="hidden" name="device_id" id="device_id" value="{{ request.cookies.get('device_id', '') }}">
 
         <label for="roll">Roll Number:</label>
-        <input type="text" name="roll" placeholder="e.g., 23BCAXXX" required>
+        <input type="text" id="roll" name="roll" placeholder="e.g., 23BCAXXX" required onblur="fetchName()">
 
         <p id="name-display" style="font-weight: bold; color: green; margin-top: 10px;"></p>
 
