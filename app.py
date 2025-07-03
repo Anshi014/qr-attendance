@@ -82,11 +82,11 @@ def submit_attendance():
     name = result[0] if result else "Unknown"
 
     # ✅ BLOCK: Same roll cannot mark twice
-    if has_already_submitted(subject, session_id, device_id=device_id):
+    if has_already_submitted(subject=subject, device_id=device_id):
         return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
 
     # ✅ BLOCK: Same device/IP can't mark for multiple rolls
-    if has_already_submitted(subject, session_id, ip_address=ip_address):
+    if has_already_submitted(subject=subject, ip_address=ip_address):
         return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
 
     # ✅ Save attendance
@@ -233,12 +233,53 @@ def full_report(subject):
     student_df = pd.DataFrame(students, columns=["Roll", "Name"])
     final_df = pd.merge(student_df, pivot, on="Roll", how="left").fillna("A")
 
+    # ✅ Add total 'P' and % attendance
+    status_cols = final_df.columns[2:]  # skip Roll and Name
+    final_df["Total Present"] = final_df[status_cols].apply(lambda row: sum(x == "P" for x in row), axis=1)
+    final_df["% Attendance"] = (final_df["Total Present"] / len(status_cols) * 100).round(2)
+
+    # ⬇️ Insert debug prints here
+    print("▶️ Attendance Records:", records)
+    print("▶️ Pivot Columns:", pivot.columns.tolist())
+    print("▶️ Final Report Preview:\n", final_df.head())
+
     # Export
     os.makedirs("exports", exist_ok=True)
     filename = f"{subject}_full_report.xlsx"
     final_df.to_excel(os.path.join("exports", filename), index=False)
 
+    from openpyxl import load_workbook
+    from openpyxl.styles import PatternFill
+
+    wb = load_workbook(os.path.join("exports", filename))
+    ws = wb.active  
+    green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    red = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
+
+    for row in ws.iter_rows(min_row=2, min_col=3, max_col=ws.max_column - 2):
+    for cell in row:
+        if cell.value == "P":
+            cell.fill = green
+        elif cell.value == "A":
+            cell.fill = red
+
+    wb.save(os.path.join("exports", filename))
+
     return redirect(url_for("download_export", filename=filename))
+
+@app.route("/debug_attendance")
+def debug_attendance():
+    import sqlite3
+    conn = sqlite3.connect("attendance.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT roll, subject, session_id, timestamp FROM attendance")
+    rows = cursor.fetchall()
+    conn.close()
+    return "<br>".join([str(row) for row in rows])
+
+@app.route("/test")
+def test_page():
+    return "✅ Server is running!"
 
 @app.route("/logout")
 def logout():
