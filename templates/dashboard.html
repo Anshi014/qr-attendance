@@ -51,6 +51,16 @@ img { display: block;
         {% endfor %} 
     </ul> 
     {% endif %}
+
+    {% if daily_counts %}
+    <h3>📈 Today's Attendance Summary</h3>
+    <ul>
+        {% for subject, count in daily_counts.items() %}
+        <li><strong>{{ subject }}:</strong> {{ count }} students marked present</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
     {% if qr_image %} 
     <h3>✅ QR Generated</h3> 
     <p style="text-align: center;">Session ID: <strong>{{ session_id }}</strong></p> 

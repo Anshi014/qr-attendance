@@ -43,7 +43,27 @@ def generate_qr_route(subject):
         return redirect(url_for("login"))
 
     session_id, subject, qr_image = generate_qr(subject)
-    return render_template("dashboard.html", qr_image=qr_image, session_id=session_id, subject=subject)
+    
+    import sqlite3
+    from datetime import date
+
+    conn = sqlite3.connect("attendance.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT subject, COUNT(DISTINCT roll) FROM attendance
+        WHERE DATE(timestamp) = ?
+        GROUP BY subject
+    """, (date.today().isoformat(),))
+    daily_counts = dict(cursor.fetchall())
+    conn.close()
+
+    return render_template("dashboard.html",
+        username=session["user"],
+        role=user["role"],
+        subjects=user["subjects"],
+        daily_counts=daily_counts
+    )
+
 @app.route("/scan")
 def scan():
     subject = request.args.get("subject", "")
@@ -202,6 +222,13 @@ def refresh_students():
 
 @app.route("/full_report/<subject>")
 def full_report(subject):
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    user = users.get(session["user"])
+    if user["role"] not in ["incharge", "cr"]:
+        return "❌ Access denied. Only CR/Incharge can view full report."
+
     import pandas as pd
     import sqlite3
     import os
@@ -245,7 +272,10 @@ def full_report(subject):
 
     # Export
     os.makedirs("exports", exist_ok=True)
-    filename = f"{subject}_full_report.xlsx"
+    from datetime import datetime
+    month_str = datetime.now().strftime("%B")
+    filename = f"{subject}_{month_str}_report.xlsx"
+
     final_df.to_excel(os.path.join("exports", filename), index=False)
 
     from openpyxl import load_workbook

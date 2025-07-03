@@ -26,7 +26,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-def has_already_submitted(subject, session_id, device_id=None, ip_address=None):
+def has_already_submitted(subject, device_id=None, ip_address=None):
     import sqlite3
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
@@ -34,8 +34,8 @@ def has_already_submitted(subject, session_id, device_id=None, ip_address=None):
     if device_id:
         cursor.execute("""
             SELECT 1 FROM attendance
-            WHERE subject = ? AND session_id = ? AND device_id = ?
-        """, (subject, session_id, device_id))
+            WHERE subject = ? AND device_id = ?
+        """, (subject, device_id))
         if cursor.fetchone():
             conn.close()
             return True
@@ -43,8 +43,8 @@ def has_already_submitted(subject, session_id, device_id=None, ip_address=None):
     if ip_address:
         cursor.execute("""
             SELECT 1 FROM attendance
-            WHERE subject = ? AND session_id = ? AND ip_address = ?
-        """, (subject, session_id, ip_address))
+            WHERE subject = ? AND ip_address = ?
+        """, (subject, ip_address))
         if cursor.fetchone():
             conn.close()
             return True
