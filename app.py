@@ -257,11 +257,11 @@ def full_report(subject):
     red = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
 
     for row in ws.iter_rows(min_row=2, min_col=3, max_col=ws.max_column - 2):
-    for cell in row:
-        if cell.value == "P":
-            cell.fill = green
-        elif cell.value == "A":
-            cell.fill = red
+        for cell in row:
+            if cell.value == "P":
+                cell.fill = green
+            elif cell.value == "A":
+                cell.fill = red
 
     wb.save(os.path.join("exports", filename))
 
