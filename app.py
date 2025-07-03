@@ -44,6 +44,7 @@ def generate_qr_route(subject):
 
     session_id, subject, qr_image = generate_qr(subject)
     
+    user = users.get(session["user"])
     import sqlite3
     from datetime import date
 
@@ -61,6 +62,9 @@ def generate_qr_route(subject):
         username=session["user"],
         role=user["role"],
         subjects=user["subjects"],
+        qr_image=qr_image,
+        session_id=session_id,
+        subject=subject,
         daily_counts=daily_counts
     )
 
