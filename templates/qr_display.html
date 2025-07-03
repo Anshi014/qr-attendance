@@ -1,0 +1,6 @@
+<h2>✅ QR Generated for {{ subject }}</h2>
+<p style="text-align: center;">Session ID: <strong>{{ session_id }}</strong></p>
+<img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="220">
+<div style="text-align: center; margin-top: 20px;">
+    <a href="{{ url_for('dashboard') }}">🔙 Back to Dashboard</a>
+</div>

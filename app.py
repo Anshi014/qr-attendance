@@ -58,15 +58,7 @@ def generate_qr_route(subject):
     daily_counts = dict(cursor.fetchall())
     conn.close()
 
-    return render_template("dashboard.html",
-        username=session["user"],
-        role=user["role"],
-        subjects=user["subjects"],
-        qr_image=qr_image,
-        session_id=session_id,
-        subject=subject,
-        daily_counts=daily_counts
-    )
+    return redirect(url_for("qr_display", subject=subject, session_id=session_id, qr_image=qr_image))
 
 @app.route("/scan")
 def scan():
@@ -314,6 +306,15 @@ def debug_attendance():
 @app.route("/test")
 def test_page():
     return "✅ Server is running!"
+
+@app.route("/show_qr/<subject>/<session_id>/<qr_image>")
+def show_qr(subject, session_id, qr_image):
+    return render_template("show_qr.html",
+        subject=subject,
+        session_id=session_id,
+        qr_image=qr_image
+    )
+
 
 @app.route("/logout")
 def logout():
