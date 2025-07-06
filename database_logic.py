@@ -32,6 +32,17 @@ def has_already_submitted(subject, session_id=None, device_id=None, ip_address=N
     cursor = conn.cursor()
 
     # ✅ Block if same device has already marked attendance for this subject+session
+    if device_id and roll:
+        cursor.execute("""
+            SELECT roll FROM attendance
+            WHERE subject = ? AND session_id = ? AND device_id = ?
+        """, (subject, session_id, device_id))
+        existing = cursor.fetchone()
+        if existing and existing[0].strip().upper() != roll.strip().upper():
+            conn.close()
+            return True
+
+    # Normal device_id check
     if device_id:
         cursor.execute("""
             SELECT 1 FROM attendance
@@ -40,7 +51,7 @@ def has_already_submitted(subject, session_id=None, device_id=None, ip_address=N
         if cursor.fetchone():
             conn.close()
             return True
-
+        
     # ✅ Block if same IP has already submitted for same roll
     if ip_address:
         cursor.execute("""
