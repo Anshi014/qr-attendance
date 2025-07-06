@@ -80,9 +80,10 @@ def submit_attendance():
     device_id = request.form.get("device_id")
     ip_address = request.remote_addr
     
-    print("ROLL:", roll)
-    print("IP ADDRESS:", ip_address)
-    print("DEVICE ID:", device_id)
+    print("📲 Roll:", roll)
+    print("📶 Device ID:", device_id)
+    print("🌐 IP Address:", ip_address)
+
 
     # Check if roll exists
     if not roll_exists(roll):
@@ -98,11 +99,11 @@ def submit_attendance():
     name = result[0] if result else "Unknown"
 
     # ✅ BLOCK: Same roll cannot mark twice
-    if has_already_submitted(subject=subject, device_id=device_id, roll=roll):
+    if has_already_submitted(subject=subject, device_id=device_id):
         return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
 
     # ✅ BLOCK: Same device/IP can't mark for multiple rolls
-    if has_already_submitted(subject=subject, ip_address=ip_address, roll=roll):
+    if has_already_submitted(subject=subject, ip_address=ip_address):
         return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
 
     # ✅ Save attendance
