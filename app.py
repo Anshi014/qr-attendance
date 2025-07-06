@@ -98,11 +98,11 @@ def submit_attendance():
     name = result[0] if result else "Unknown"
 
     # ✅ BLOCK: Same roll cannot mark twice
-    if has_already_submitted(subject=subject, device_id=device_id):
+    if has_already_submitted(subject=subject, device_id=device_id, roll=roll):
         return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
 
     # ✅ BLOCK: Same device/IP can't mark for multiple rolls
-    if has_already_submitted(subject=subject, ip_address=ip_address):
+    if has_already_submitted(subject=subject, ip_address=ip_address, roll=roll):
         return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
 
     # ✅ Save attendance
@@ -307,9 +307,9 @@ def debug_attendance():
 def test_page():
     return "✅ Server is running!"
 
-@app.route("/show_qr/<subject>/<session_id>/<qr_image>")
-def show_qr(subject, session_id, qr_image):
-    return render_template("show_qr.html",
+@app.route("/qr_display/<subject>/<session_id>/<qr_image>")
+def qr_display(subject, session_id, qr_image):
+    return render_template("qr_display.html",
         subject=subject,
         session_id=session_id,
         qr_image=qr_image

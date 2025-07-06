@@ -26,25 +26,27 @@ def init_db():
     conn.commit()
     conn.close()
 
-def has_already_submitted(subject, device_id=None, ip_address=None):
+def has_already_submitted(subject, session_id=None, device_id=None, ip_address=None, roll=None):
     import sqlite3
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
 
+    # ✅ Block if same device has already marked attendance for this subject+session
     if device_id:
         cursor.execute("""
             SELECT 1 FROM attendance
-            WHERE subject = ? AND device_id = ?
-        """, (subject, device_id))
+            WHERE subject = ? AND session_id = ? AND device_id = ?
+        """, (subject, session_id, device_id))
         if cursor.fetchone():
             conn.close()
             return True
 
-    if ip_address:
+    # ✅ Block if same IP has already submitted for same roll
+    if ip_address and roll:
         cursor.execute("""
             SELECT 1 FROM attendance
-            WHERE subject = ? AND ip_address = ?
-        """, (subject, ip_address))
+            WHERE subject = ? AND session_id = ? AND ip_address = ? AND roll = ?
+        """, (subject, session_id, ip_address, roll))
         if cursor.fetchone():
             conn.close()
             return True
