@@ -26,7 +26,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-def has_already_submitted(subject, session_id, device_id=None, ip_address=None, roll=None):
+def has_already_submitted(subject, session_id, device_id=None, ip_address=None):
     import sqlite3
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
