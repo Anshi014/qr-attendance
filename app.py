@@ -99,7 +99,7 @@ def submit_attendance():
     name = result[0] if result else "Unknown"
 
     # ✅ BLOCK: Same roll cannot mark twice
-    if has_already_submitted(subject=subject, device_id=device_id, roll=roll):
+    if has_already_submitted(subject, session_id, device_id=device_id, roll=roll):
         return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
 
     # ✅ BLOCK: Same device/IP can't mark for multiple rolls
