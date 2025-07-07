@@ -31,7 +31,6 @@ def has_already_submitted(subject, session_id, device_id=None, ip_address=None, 
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
 
-    # ✅ BLOCK: Same device should not submit for multiple rolls
     if device_id:
         cursor.execute("""
             SELECT roll FROM attendance
@@ -42,17 +41,19 @@ def has_already_submitted(subject, session_id, device_id=None, ip_address=None, 
             existing_roll = result[0].strip().upper()
             if roll and existing_roll != roll.strip().upper():
                 conn.close()
-                return True  # ⚠️ Device already submitted for another student
+                return True
 
-    # (Optional) Block same IP if needed (currently skip kar sakte ho)
-    # if ip_address:
-    #     cursor.execute("""
-    #         SELECT 1 FROM attendance
-    #         WHERE subject = ? AND session_id = ? AND ip_address = ?
-    #     """, (subject, session_id, ip_address))
-    #     if cursor.fetchone():
-    #         conn.close()
-    #         return True
+    if ip_address:
+        cursor.execute("""
+            SELECT roll FROM attendance
+            WHERE subject = ? AND session_id = ? AND ip_address = ?
+        """, (subject, session_id, ip_address))
+        result = cursor.fetchone()
+        if result:
+            existing_roll = result[0].strip().upper()
+            if roll and existing_roll != roll.strip().upper():
+                conn.close()
+                return True
 
     conn.close()
     return False
