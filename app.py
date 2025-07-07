@@ -86,11 +86,18 @@ def submit_attendance():
     print("📶 Device ID:", device_id)
     print("🌐 IP Address:", ip_address)
 
-    # Check if roll exists
+    # ❌ If same device has already been used
+    if has_already_submitted(subject, session_id, device_id=device_id):
+        return render_template("confirm.html", message="❌ This device already marked attendance for this session.")
+
+    # ❌ If same IP has already been used
+    if has_already_submitted(subject, session_id, ip_address=ip_address):
+        return render_template("confirm.html", message="❌ This IP already marked attendance for this session.")
+
+    # ✅ Now mark attendance
     if not roll_exists(roll):
         return render_template("confirm.html", message="❌ Roll number not found.")
 
-    # Get name from DB
     import sqlite3
     conn = sqlite3.connect("attendance.db")
     cursor = conn.cursor()
@@ -99,15 +106,6 @@ def submit_attendance():
     conn.close()
     name = result[0] if result else "Unknown"
 
-    # ✅ BLOCK: Same device already submitted for same session
-    if has_already_submitted(subject, session_id, device_id=device_id):
-        return render_template("confirm.html", message="❌ This device already marked attendance for this subject.")
-
-    # ✅ BLOCK: Same IP already submitted for same session
-    if has_already_submitted(subject, session_id, ip_address=ip_address):
-        return render_template("confirm.html", message="❌ This IP already submitted attendance for this subject.")
-
-    # ✅ Save attendance
     mark_attendance(subject, session_id, roll, name, device_id, ip_address)
     return render_template("confirm.html", message=f"✅ Attendance marked for {name} ({roll})")
 
