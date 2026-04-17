@@ -1,6 +1,156 @@
-<h2>✅ QR Generated for {{ subject }}</h2>
-<p style="text-align: center;">Session ID: <strong>{{ session_id }}</strong></p>
-<img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="220">
-<div style="text-align: center; margin-top: 20px;">
-    <a href="{{ url_for('dashboard') }}">🔙 Back to Dashboard</a>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code - {{ subject.name }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            max-width: 420px;
+            width: 100%;
+        }
+        h2 { color: #333; margin-bottom: 8px; }
+        .subject-badge {
+            display: inline-block;
+            background: #e8f4fd;
+            color: #1565c0;
+            padding: 4px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .class-badge {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 20px;
+        }
+        #qr-img {
+            width: 240px;
+            height: 240px;
+            border: 3px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 8px;
+            margin-bottom: 16px;
+            transition: opacity 0.3s;
+        }
+        #session-label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 24px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            margin: 6px;
+            transition: background 0.2s;
+        }
+        .btn-primary   { background: #1976d2; color: white; }
+        .btn-primary:hover { background: #1565c0; }
+        .btn-secondary { background: #f5f5f5; color: #333; border: 1px solid #ccc; }
+        .btn-secondary:hover { background: #e0e0e0; }
+        #status-msg {
+            font-size: 13px;
+            color: #2e7d32;
+            min-height: 20px;
+            margin-top: 8px;
+        }
+        .spinner { display: none; font-size: 13px; color: #888; }
+        .divider { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+        .report-links { font-size: 14px; color: #555; }
+        .report-links a { color: #1976d2; text-decoration: none; margin: 0 6px; }
+        .report-links a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2>📋 Attendance QR</h2>
+
+    <!-- FIXED: subject is now a dict -->
+    <div class="subject-badge">{{ subject.name }}</div>
+    <span class="class-badge">{{ subject.class_name }}</span>
+
+    <img id="qr-img" src="/static/qr_codes/{{ qr_image }}" alt="QR Code">
+
+    <div id="session-label">
+        Session ID: <strong id="session-id-text">{{ session_id }}</strong>
+    </div>
+
+    <!-- FIXED: refresh URL uses subject.id -->
+    <button class="btn btn-primary" onclick="refreshQR()">🔄 Generate New QR</button>
+    <a class="btn btn-secondary" href="/dashboard">← Dashboard</a>
+
+    <div id="status-msg"></div>
+    <div class="spinner" id="spinner">Generating new QR...</div>
+
+    <hr class="divider">
+    <div class="report-links">
+        Download report:
+        <!-- FIXED: report URLs use subject.id -->
+        <a href="/report/{{ subject.id }}">📥 {{ subject.name }} Report</a>
+        &nbsp;|&nbsp;
+        <a href="/report/class/{{ subject.class_id }}">📂 Class Report</a>
+    </div>
 </div>
+
+<script>
+    // FIXED: subject_id integer use ho raha hai
+    const subjectId = {{ subject.id }};
+
+    function refreshQR() {
+        const img        = document.getElementById("qr-img");
+        const spinner    = document.getElementById("spinner");
+        const statusMsg  = document.getElementById("status-msg");
+        const sessionText = document.getElementById("session-id-text");
+
+        img.style.opacity = "0.3";
+        spinner.style.display = "block";
+        statusMsg.textContent = "";
+
+        // FIXED: /refresh_qr/<subject_id>
+        fetch(`/refresh_qr/${subjectId}`)
+            .then(response => {
+                if (!response.ok) throw new Error("Server error");
+                return response.json();
+            })
+            .then(data => {
+                img.src = `/static/qr_codes/${data.qr_image}?t=${Date.now()}`;
+                img.style.opacity = "1";
+                sessionText.textContent = data.session_id;
+                spinner.style.display = "none";
+                statusMsg.textContent = "✅ New QR generated!";
+                setTimeout(() => { statusMsg.textContent = ""; }, 3000);
+            })
+            .catch(() => {
+                img.style.opacity = "1";
+                spinner.style.display = "none";
+                statusMsg.style.color = "red";
+                statusMsg.textContent = "❌ Failed to refresh. Try again.";
+            });
+    }
+</script>
+</body>
+</html>

@@ -2,67 +2,253 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Login | QR Attendance</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | QR Attendance — Rayat Bahra University</title>
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: Arial, sans-serif;
-            max-width: 400px;
-            margin: 60px auto;
+            font-family: 'Arial', sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0a1628 0%, #1a3a6b 50%, #8b1a1a 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
             padding: 20px;
-            background: linear-gradient(to bottom right, #d0f0c0, #a2d5f2);
-            border: 1px solid #ddd;
-            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
         }
 
-        h2 {
-            text-align: center;
+        /* Background decorative circles */
+        body::before {
+            content: '';
+            position: absolute;
+            width: 400px; height: 400px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 50%;
+            top: -100px; left: -100px;
+        }
+        body::after {
+            content: '';
+            position: absolute;
+            width: 300px; height: 300px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 50%;
+            bottom: -80px; right: -80px;
         }
 
-        input, button {
+        .wrapper {
             width: 100%;
-            padding: 10px;
-            margin-top: 8px;
-            font-size: 1rem;
+            max-width: 420px;
+            position: relative;
+            z-index: 1;
         }
 
+        /* University header */
+        .university-header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .uni-logo-area {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            margin-bottom: 10px;
+        }
+        .uni-emblem {
+            width: 64px; height: 64px;
+            background: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            flex-shrink: 0;
+        }
+        .uni-name {
+            text-align: left;
+        }
+        .uni-name .rayat {
+            font-size: 26px;
+            font-weight: 900;
+            color: #1a3a6b;
+            letter-spacing: 2px;
+            text-shadow: 2px 2px 0 white, -1px -1px 0 white,
+                         1px -1px 0 white, -1px 1px 0 white;
+        }
+        .uni-name .bahra {
+            font-size: 26px;
+            font-weight: 900;
+            color: #8b1a1a;
+            letter-spacing: 2px;
+            text-shadow: 2px 2px 0 white, -1px -1px 0 white,
+                         1px -1px 0 white, -1px 1px 0 white;
+        }
+        .uni-name .university {
+            font-size: 11px;
+            color: rgba(255,255,255,0.7);
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+        .uni-tagline {
+            font-size: 12px;
+            color: rgba(255,255,255,0.5);
+            letter-spacing: 1px;
+        }
+
+        /* Login card */
+        .card {
+            background: rgba(255,255,255,0.97);
+            border-radius: 20px;
+            padding: 36px 32px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+        }
+
+        .card-title {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .card-title h2 {
+            font-size: 20px;
+            color: #1a3a6b;
+            margin-bottom: 4px;
+        }
+        .card-title p {
+            font-size: 13px;
+            color: #888;
+        }
+
+        .divider {
+            height: 3px;
+            background: linear-gradient(to right, #1a3a6b, #8b1a1a);
+            border-radius: 2px;
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+        }
         label {
+            display: block;
+            font-size: 13px;
             font-weight: bold;
+            color: #444;
+            margin-bottom: 7px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            color: #333;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            background: #fafafa;
+        }
+        input:focus {
+            outline: none;
+            border-color: #1a3a6b;
+            box-shadow: 0 0 0 3px rgba(26,58,107,0.1);
+            background: white;
         }
 
         .error {
-            color: red;
-            margin-bottom: 15px;
-            text-align: center;
+            background: #fdecea;
+            color: #c62828;
+            border-left: 4px solid #c62828;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-bottom: 18px;
         }
 
-        button {
-            background-color: #4CAF50;
+        .btn-login {
+            width: 100%;
+            padding: 13px;
+            background: linear-gradient(135deg, #1a3a6b, #2a5298);
             color: white;
             border: none;
-            margin-top: 16px;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: bold;
             cursor: pointer;
+            letter-spacing: 0.5px;
+            transition: all 0.2s;
+            margin-top: 4px;
         }
+        .btn-login:hover {
+            background: linear-gradient(135deg, #0f2447, #1a3a6b);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(26,58,107,0.4);
+        }
+        .btn-login:active { transform: translateY(0); }
 
-        button:hover {
-            background-color: #45a049;
+        .footer-note {
+            text-align: center;
+            font-size: 12px;
+            color: rgba(255,255,255,0.4);
+            margin-top: 20px;
         }
     </style>
 </head>
 <body>
-    <h2>🔐 Login to QR Attendance System</h2>
+<div class="wrapper">
 
-    {% if message %}
+    <!-- University Branding -->
+    <div class="university-header">
+        <div class="uni-logo-area">
+            <div class="uni-emblem">🎓</div>
+            <div class="uni-name">
+                <div class="rayat">RAYAT-BAHRA</div>
+                <div class="bahra" style="font-size:16px;letter-spacing:4px;">UNIVERSITY</div>
+                <div class="university">Established 2001</div>
+            </div>
+        </div>
+        <div class="uni-tagline">Department of Computer Applications</div>
+    </div>
+
+    <!-- Login Card -->
+    <div class="card">
+        <div class="card-title">
+            <h2>🔐 QR Attendance System</h2>
+            <p>Sign in to your account</p>
+        </div>
+        <div class="divider"></div>
+
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+
+        {% if message %}
         <div class="error">{{ message }}</div>
-    {% endif %}
+        {% endif %}
 
-    <form method="POST" autocomplete="on">
-        <label for="username">Username:</label>
-        <input type="text" name="username" autocomplete="username" required>
+        <form method="POST" autocomplete="on">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" name="username" id="username"
+                       placeholder="Enter your username"
+                       autocomplete="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" name="password" id="password"
+                       placeholder="Enter your password"
+                       autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn-login">Login →</button>
+        </form>
+    </div>
 
-        <label for="password">Password:</label>
-        <input type="password" name="password" autocomplete="current-password" required>
-
-        <button type="submit">Login</button>
-    </form>
+    <div class="footer-note">
+        © Rayat Bahra University — QR Smart Attendance v2.0
+    </div>
+</div>
 </body>
 </html>

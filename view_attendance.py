@@ -12,3 +12,4 @@ else:
     print("📋 Attendance Records:")
     for row in rows:
         print(row)
+

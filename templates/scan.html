@@ -2,113 +2,185 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Mark Attendance | QR System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mark Attendance - {{ subject.name }}</title>
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: Arial, sans-serif;
-            max-width: 450px;
-            margin: 50px auto;
+            background: #f0f2f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
             padding: 20px;
-            background: linear-gradient(to bottom right, #d0f0c0, #a2d5f2);
-            border: 1px solid #ccc;
-            border-radius: 10px;
         }
-
-        h2 {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-
-        input {
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            max-width: 380px;
             width: 100%;
-            padding: 10px;
-            margin: 8px 0;
-            font-size: 1rem;
-            box-sizing: border-box;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            text-align: center;
         }
-
-        button {
+        h2 { color: #333; margin-bottom: 8px; }
+        .subject-badge {
+            display: inline-block;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 4px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .class-badge {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 20px;
+        }
+        .form-group { margin-bottom: 16px; text-align: left; }
+        label { display: block; font-size: 14px; color: #555; margin-bottom: 6px; }
+        input[type="text"] {
             width: 100%;
             padding: 12px;
-            margin-top: 16px;
-            background-color: #4CAF50;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus { outline: none; border-color: #1976d2; }
+        #name-preview {
+            font-size: 13px;
+            color: #2e7d32;
+            min-height: 20px;
+            margin-top: 4px;
+            font-weight: bold;
+        }
+        .btn-submit {
+            width: 100%;
+            padding: 14px;
+            background: #2e7d32;
             color: white;
             border: none;
-            font-size: 1rem;
-            cursor: pointer;
-            border-radius: 4px;
-        }
-
-        button:hover {
-            background-color: #45a049;
-        }
-
-        .note {
-            text-align: center;
-            font-size: 0.9rem;
-            margin-top: 15px;
-            color: #555;
-        }
-
-        #name-display {
+            border-radius: 8px;
+            font-size: 16px;
             font-weight: bold;
-            margin-top: 10px;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: background 0.2s;
         }
+        .btn-submit:hover { background: #1b5e20; }
+        .btn-submit:disabled { background: #aaa; cursor: not-allowed; }
+        .note { font-size: 12px; color: #888; margin-top: 16px; }
+
+        .already-card { text-align: center; }
+        .already-card .icon { font-size: 56px; margin-bottom: 16px; }
+        .already-card .msg {
+            font-size: 18px; font-weight: bold;
+            color: #e65100; line-height: 1.5;
+        }
+        .already-card .note { font-size: 13px; color: #888; margin-top: 16px; }
     </style>
 </head>
 <body>
-    <h2>📝 Mark Your Attendance</h2>
+<div class="card" id="main-card">
+    <h2>✅ Mark Attendance</h2>
+    <div class="subject-badge">{{ subject.name }}</div>
+    <span class="class-badge">{{ subject.class_name }}</span>
 
-    <form method="POST" action="/submit_attendance">
-        <input type="hidden" name="subject" value="{{ subject }}">
-        <input type="hidden" name="session_id" value="{{ session_id }}">
-        <input type="hidden" name="device_id" id="device_id" value="{{ request.cookies.get('device_id', '') }}">
+    <form method="POST" action="/submit_attendance" onsubmit="return validateForm()">
+        <!-- FIXED: subject_id integer pass ho raha hai -->
+        <input type="hidden" name="subject_id"   value="{{ subject.id }}">
+        <input type="hidden" name="session_id"   value="{{ session_id }}">
+        <input type="hidden" name="device_token" value="{{ device_token }}">
 
-        <label for="roll">Roll Number:</label>
-        <input type="text" id="roll" name="roll" placeholder="e.g., 23BCAXXX" required onblur="fetchName()">
+        <div class="form-group">
+            <label for="roll">Your Roll Number</label>
+            <input
+                type="text"
+                id="roll"
+                name="roll"
+                placeholder="e.g. 23BCA001"
+                autocomplete="off"
+                oninput="lookupName(this.value)"
+                required
+            >
+            <div id="name-preview"></div>
+        </div>
 
-        <p id="name-display" style="font-weight: bold; color: green; margin-top: 10px;"></p>
-
-        <button type="submit">✅ Submit Attendance</button>
+        <button type="submit" class="btn-submit" id="submit-btn" disabled>
+            Submit Attendance
+        </button>
     </form>
 
-    <div class="note">
-        This device can mark attendance only once per subject.
-    </div>
+    <p class="note">Make sure you enter your correct roll number.<br>Attendance cannot be changed after submission.</p>
+</div>
 
-    <script>
-        let deviceID = localStorage.getItem("device_id");
-        if (!deviceID) {
-            deviceID = "dev-" + Math.random().toString(36).substring(2, 10);
-            localStorage.setItem("device_id", deviceID);
+<script>
+    let nameFound = false;
+
+    // ── localStorage check: same session mein dobara form na dikhe ──
+    window.addEventListener("load", function () {
+        const sid = "{{ session_id }}";
+        if (localStorage.getItem("attended_" + sid)) {
+            document.getElementById("main-card").innerHTML = `
+                <div class="already-card">
+                    <div class="icon">⚠️</div>
+                    <div class="msg">You have already marked attendance for this session.</div>
+                    <p class="note">If you think this is a mistake, contact your teacher.</p>
+                </div>
+            `;
         }
-        document.getElementById("device_id").value = deviceID;
+    });
 
-        function fetchName() {
-            const roll = document.getElementById("roll").value.trim();
-            if (!roll) return;
+    function lookupName(roll) {
+        const preview = document.getElementById("name-preview");
+        const btn     = document.getElementById("submit-btn");
+        roll = roll.trim().toUpperCase();
 
-            fetch("/get_name", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: "roll=" + encodeURIComponent(roll)
-            })
-            .then(response => response.text())
-            .then(data => {
-                const nameDisplay = document.getElementById("name-display");
-                if (data === "❌ Not found") {
-                    nameDisplay.textContent = "Roll number not found.";
-                    nameDisplay.style.color = "red";
+        if (roll.length < 5) {
+            preview.textContent = "";
+            btn.disabled = true;
+            nameFound = false;
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("roll", roll);
+
+        fetch("/get_name", { method: "POST", body: formData })
+            .then(r => r.text())
+            .then(name => {
+                if (name.startsWith("❌")) {
+                    preview.style.color = "#c62828";
+                    preview.textContent = "Roll number not found";
+                    btn.disabled = true;
+                    nameFound = false;
                 } else {
-                    nameDisplay.textContent = "Name: " + data;
-                    nameDisplay.style.color = "green";
+                    preview.style.color = "#2e7d32";
+                    preview.textContent = "👤 " + name;
+                    btn.disabled = false;
+                    nameFound = true;
                 }
             })
             .catch(() => {
-                document.getElementById("name-display").textContent = "Error fetching name.";
-                document.getElementById("name-display").style.color = "red";
+                preview.textContent = "";
+                btn.disabled = false;
             });
+    }
+
+    function validateForm() {
+        if (!nameFound) {
+            alert("Please enter a valid roll number.");
+            return false;
         }
-    </script>
+        return true;
+    }
+</script>
 </body>
 </html>

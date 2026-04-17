@@ -2,122 +2,419 @@ import sqlite3
 from datetime import datetime
 import pandas as pd
 
+DB = "attendance.db"
+
+def get_db():
+    return sqlite3.connect(DB)
+
+# ══════════════════════════════════════════
+# INIT — create all tables
+# ══════════════════════════════════════════
+
 def init_db():
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-    cursor.execute("""
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('coordinator','incharge','teacher')),
+            full_name TEXT,
+            class_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS classes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            department TEXT,
+            incharge_id INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS subjects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            class_id INTEGER NOT NULL,
+            teacher_id INTEGER,
+            UNIQUE(name, class_id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS students (
+            roll TEXT PRIMARY KEY,
+            name TEXT,
+            class_id INTEGER
+        )
+    """)
+
+    c.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT,
+            subject_id INTEGER,
+            subject_name TEXT,
+            class_id INTEGER,
             session_id TEXT,
             roll TEXT,
             name TEXT,
             device_id TEXT,
             ip_address TEXT,
-            timestamp TEXT
+            timestamp TEXT,
+            UNIQUE(session_id, roll)
         )
     """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS students (
-            roll TEXT PRIMARY KEY,
-            name TEXT
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS session_ip_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            ip_address TEXT,
+            UNIQUE(session_id, ip_address)
         )
     """)
+
+    conn.commit()
+
+    # Default coordinator
+    c.execute("SELECT COUNT(*) FROM users")
+    if c.fetchone()[0] == 0:
+        c.execute("""
+            INSERT INTO users (username, password, role, full_name)
+            VALUES ('coordinator', 'coord123', 'coordinator', 'Coordinator')
+        """)
+        conn.commit()
+        print("✅ Default coordinator: username=coordinator, password=coord123")
+
+    conn.close()
+
+# ══════════════════════════════════════════
+# USER MANAGEMENT
+# ══════════════════════════════════════════
+
+def get_user_by_username(username):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, username, password, role, full_name, class_id FROM users WHERE username = ?", (username,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {"id": row[0], "username": row[1], "password": row[2],
+                "role": row[3], "full_name": row[4], "class_id": row[5]}
+    return None
+
+def authenticate_user(username, password):
+    user = get_user_by_username(username)
+    if user and user["password"] == password:
+        return user
+    return None
+
+def add_user(username, password, role, full_name="", class_id=None):
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO users (username, password, role, full_name, class_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (username, password, role, full_name, class_id))
+        conn.commit()
+        return True, "User added!"
+    except sqlite3.IntegrityError:
+        return False, "Username already exists."
+    finally:
+        conn.close()
+
+def delete_user(user_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
     conn.close()
 
-def has_already_submitted(subject, session_id, device_id=None, ip_address=None, roll=None):
-    import sqlite3
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-
-    # Block: Same device for same session (any roll)
-    if device_id:
-        cursor.execute("""
-            SELECT 1 FROM attendance
-            WHERE subject = ? AND session_id = ? AND device_id = ?
-        """, (subject, session_id, device_id))
-        if cursor.fetchone():
-            conn.close()
-            return True
-
-    # Block: Same IP for same session (any roll)
-    if ip_address:
-        cursor.execute("""
-            SELECT 1 FROM attendance
-            WHERE subject = ? AND session_id = ? AND ip_address = ?
-        """, (subject, session_id, ip_address))
-        if cursor.fetchone():
-            conn.close()
-            return True
-
+def get_all_users():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT u.id, u.username, u.role, u.full_name, cl.name
+        FROM users u
+        LEFT JOIN classes cl ON u.class_id = cl.id
+        ORDER BY u.role, u.username
+    """)
+    rows = c.fetchall()
     conn.close()
-    return False
+    return rows
 
+def get_teachers():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, username, full_name FROM users WHERE role = 'teacher' ORDER BY full_name")
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
-def roll_exists(roll):
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM students WHERE roll = ?", (roll.strip().upper(),))
-    result = cursor.fetchone()
+def get_incharges():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, username, full_name FROM users WHERE role = 'incharge' ORDER BY full_name")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+# ══════════════════════════════════════════
+# CLASS MANAGEMENT
+# ══════════════════════════════════════════
+
+def add_class(name, department=""):
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO classes (name, department) VALUES (?, ?)", (name.strip(), department))
+        conn.commit()
+        return True, "Class added!"
+    except sqlite3.IntegrityError:
+        return False, "Class already exists."
+    finally:
+        conn.close()
+
+def delete_class(class_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM classes WHERE id = ?", (class_id,))
+    conn.commit()
+    conn.close()
+
+def get_all_classes():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT cl.id, cl.name, cl.department, u.full_name
+        FROM classes cl
+        LEFT JOIN users u ON cl.incharge_id = u.id
+        ORDER BY cl.name
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def assign_incharge_to_class(class_id, incharge_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE classes SET incharge_id = ? WHERE id = ?", (incharge_id, class_id))
+    c.execute("UPDATE users SET class_id = ? WHERE id = ?", (class_id, incharge_id))
+    conn.commit()
+    conn.close()
+
+# ══════════════════════════════════════════
+# SUBJECT MANAGEMENT
+# ══════════════════════════════════════════
+
+def add_subject(name, class_id, teacher_id=None):
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO subjects (name, class_id, teacher_id) VALUES (?, ?, ?)",
+                  (name.strip(), class_id, teacher_id))
+        conn.commit()
+        return True, "Subject added!"
+    except sqlite3.IntegrityError:
+        return False, "Subject already exists for this class."
+    finally:
+        conn.close()
+
+def delete_subject(subject_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
+    conn.commit()
+    conn.close()
+
+def assign_teacher_to_subject(subject_id, teacher_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE subjects SET teacher_id = ? WHERE id = ?", (teacher_id, subject_id))
+    conn.commit()
+    conn.close()
+
+def get_subjects_for_user(user):
+    conn = get_db()
+    c = conn.cursor()
+    if user["role"] == "coordinator":
+        c.execute("""
+            SELECT s.id, s.name, cl.name, u.full_name
+            FROM subjects s
+            JOIN classes cl ON s.class_id = cl.id
+            LEFT JOIN users u ON s.teacher_id = u.id
+            ORDER BY cl.name, s.name
+        """)
+    elif user["role"] == "incharge":
+        c.execute("""
+            SELECT s.id, s.name, cl.name, u.full_name
+            FROM subjects s
+            JOIN classes cl ON s.class_id = cl.id
+            LEFT JOIN users u ON s.teacher_id = u.id
+            WHERE s.class_id = ?
+            ORDER BY s.name
+        """, (user["class_id"],))
+    else:  # teacher
+        c.execute("""
+            SELECT s.id, s.name, cl.name, u.full_name
+            FROM subjects s
+            JOIN classes cl ON s.class_id = cl.id
+            LEFT JOIN users u ON s.teacher_id = u.id
+            WHERE s.teacher_id = ?
+            ORDER BY s.name
+        """, (user["id"],))
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "name": r[1], "class_name": r[2], "teacher_name": r[3]} for r in rows]
+
+def get_subject_by_id(subject_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.id, s.name, s.class_id, cl.name
+        FROM subjects s JOIN classes cl ON s.class_id = cl.id
+        WHERE s.id = ?
+    """, (subject_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {"id": row[0], "name": row[1], "class_id": row[2], "class_name": row[3]}
+    return None
+
+# ══════════════════════════════════════════
+# ATTENDANCE
+# ══════════════════════════════════════════
+
+def has_already_submitted(session_id, device_id=None, roll=None, ip_address=None):
+    conn = get_db()
+    c = conn.cursor()
+    if roll:
+        c.execute("SELECT 1 FROM attendance WHERE session_id = ? AND roll = ?", (session_id, roll.upper()))
+        if c.fetchone():
+            conn.close(); return True, "roll"
+    if device_id:
+        c.execute("SELECT 1 FROM attendance WHERE session_id = ? AND device_id = ?", (session_id, device_id))
+        if c.fetchone():
+            conn.close(); return True, "device"
+    if ip_address:
+        c.execute("SELECT 1 FROM session_ip_log WHERE session_id = ? AND ip_address = ?", (session_id, ip_address))
+        if c.fetchone():
+            conn.close(); return True, "ip"
+    conn.close()
+    return False, None
+
+def roll_exists(roll, class_id=None):
+    conn = get_db()
+    c = conn.cursor()
+    if class_id:
+        c.execute("SELECT 1 FROM students WHERE roll = ? AND class_id = ?", (roll.upper(), class_id))
+    else:
+        c.execute("SELECT 1 FROM students WHERE roll = ?", (roll.upper(),))
+    result = c.fetchone()
     conn.close()
     return result is not None
 
-from datetime import datetime  # ✅ Make sure this is at top of file
-
-def mark_attendance(subject, session_id, roll, name, device_id, ip_address):
-    import sqlite3
-    from datetime import datetime  # optional if already imported above
-
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-    
+def mark_attendance(subject_id, subject_name, class_id, session_id, roll, name, device_id, ip_address):
+    conn = get_db()
+    c = conn.cursor()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        c.execute("""
+            INSERT INTO attendance
+            (subject_id, subject_name, class_id, session_id, roll, name, device_id, ip_address, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (subject_id, subject_name, class_id, session_id, roll.upper(), name, device_id, ip_address, timestamp))
+        c.execute("INSERT OR IGNORE INTO session_ip_log (session_id, ip_address) VALUES (?, ?)",
+                  (session_id, ip_address))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
 
-    cursor.execute("""
-        INSERT INTO attendance (subject, session_id, roll, name, device_id, ip_address, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (subject, session_id, roll, name, device_id, ip_address, timestamp))
-
-    print("✅ Attendance saved for:", roll, name)
-    conn.commit()
+def get_student_name(roll):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT name FROM students WHERE roll = ?", (roll.upper(),))
+    result = c.fetchone()
     conn.close()
+    return result[0] if result else None
+
+# ══════════════════════════════════════════
+# STUDENTS
+# ══════════════════════════════════════════
+
+def seed_students_from_excel(class_id=None):
+    try:
+        df = pd.read_excel("student_list.xlsx")
+        df.rename(columns=lambda x: x.strip().lower(), inplace=True)
+        df["roll"] = df["roll"].str.strip().str.upper()
+        df["name"] = df["name"].str.strip()
+
+        # ✅ FIX: Agar Excel mein class_id column nahi hai toh parameter wala use karo
+        if "class_id" not in df.columns:
+            df["class_id"] = class_id
+
+        conn = get_db()
+        c = conn.cursor()
+        for _, row in df.iterrows():
+            # Agar column tha lekin row mein NaN hai toh bhi parameter wala use karo
+            effective_class_id = row["class_id"] if pd.notna(row["class_id"]) else class_id
+            c.execute("""
+                INSERT INTO students (roll, name, class_id) VALUES (?, ?, ?)
+                ON CONFLICT(roll) DO UPDATE SET name=excluded.name, class_id=excluded.class_id
+            """, (row["roll"], row["name"], effective_class_id))
+        conn.commit()
+        conn.close()
+        print("✅ Students seeded!")
+    except Exception as e:
+        print(f"❌ Error seeding: {e}")
 
 def load_student_list():
     try:
-        df = pd.read_excel("student_list.xlsx")
-        return df
+        return pd.read_excel("student_list.xlsx")
     except Exception as e:
-        print("❌ Error loading student list:", e)
+        print("❌", e)
         return None
 
-def seed_students_from_excel():
-    df = pd.read_excel("student_list.xlsx")
-    df.rename(columns=lambda x: x.strip().lower(), inplace=True)  # ✅ Normalize column names
-    
-    df["roll"] = df["roll"].str.strip().str.upper()
-    df["name"] = df["name"].str.strip()
+# ══════════════════════════════════════════
+# REPORT
+# ══════════════════════════════════════════
 
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-    
-    #create table if not exists
-    cursor.execute("""
-                CREATE TABLE IF NOT EXISTS students (
-                roll TEXT PRIMARY KEY,
-                name TEXT
-                )
-    """)
-
-    #Insert or update students
-    for _, row in df.iterrows():
-        cursor.execute("""
-            INSERT INTO students (roll, name) 
-            VALUES (?, ?)
-            ON CONFLICT(roll) DO UPDATE SET name = excluded.name
-        """, (row["roll"], row["name"]))
-    conn.commit()
+def generate_report_for_subject(subject_id, class_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT roll, name FROM students WHERE class_id = ? ORDER BY roll", (class_id,))
+    students = c.fetchall()
+    c.execute("""
+        SELECT roll, DATE(timestamp) as date FROM attendance
+        WHERE subject_id = ? ORDER BY date
+    """, (subject_id,))
+    records = c.fetchall()
     conn.close()
 
-# Success message
-print("Students seeded successfully!")
+    student_df = pd.DataFrame(students, columns=["Roll", "Name"])
+    if not records:
+        return student_df, []
+
+    df = pd.DataFrame(records, columns=["Roll", "Date"])
+    df["Status"] = "P"
+    pivot = df.pivot_table(index="Roll", columns="Date",
+                           values="Status", aggfunc="first", fill_value="A")
+    final_df = pd.merge(student_df, pivot, on="Roll", how="left").fillna("A")
+    date_cols = [col for col in final_df.columns if col not in ["Roll", "Name"]]
+    final_df["Total Days"] = len(date_cols)
+    final_df["Days Present"] = final_df[date_cols].apply(
+        lambda row: sum(x == "P" for x in row), axis=1)
+    final_df["Attendance %"] = (
+        (final_df["Days Present"] / len(date_cols) * 100).round(2)
+        if date_cols else 0
+    )
+    return final_df, date_cols

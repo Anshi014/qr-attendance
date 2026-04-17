@@ -1,83 +1,356 @@
-<!DOCTYPE html> 
-<html lang="en"> 
-    <head> 
-        <meta charset="UTF-8"> 
-        <title>Dashboard | QR Attendance</title> 
-        <style> body { font-family: Arial, sans-serif; 
-        max-width: 700px; 
-        margin: 40px auto; 
-        padding: 20px; 
-        background-color: #74d8f6; 
-        border: 1px solid #ccc; 
-        border-radius: 8px; }
-h2, h3 { text-align: center; }
-ul { list-style-type: none; padding-left: 0; }
-li { margin-bottom: 10px; } 
-a { text-decoration: none; 
-    color: #0066cc; 
-    font-weight: bold; }
-a:hover { 
-    text-decoration: underline; }
-img { display: block; 
-    margin: 20px auto; 
-    border: 1px solid #999; 
-    padding: 10px; 
-    background-color:#72e0ec; }
-.logout { 
-    display: block; 
-    text-align: center; 
-    margin-top: 30px; }
-</style>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | QR Attendance — RBU</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f2f5;
+            padding: 24px 16px;
+            min-height: 100vh;
+        }
+
+        /* ── Top bar ── */
+        .topbar {
+            max-width: 900px; margin: 0 auto 28px;
+            display: flex; justify-content: space-between; align-items: center;
+            background: linear-gradient(135deg, #1a3a6b, #8b1a1a);
+            border-radius: 14px; padding: 14px 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+        }
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        .topbar-left h1 { font-size: 18px; color: white; }
+        .role-badge {
+            padding: 4px 12px; border-radius: 20px;
+            font-size: 12px; font-weight: bold; text-transform: uppercase;
+        }
+        .role-coordinator { background: #fce4ec; color: #880e4f; }
+        .role-incharge    { background: #e8f5e9; color: #1b5e20; }
+        .role-teacher     { background: #e3f2fd; color: #1565c0; }
+        .topbar a { color: rgba(255,255,255,0.7); font-size: 13px; text-decoration: none; }
+        .topbar a:hover { color: white; }
+
+        /* ── Section ── */
+        .section { max-width: 900px; margin: 0 auto 24px; }
+        .section-title {
+            font-size: 12px; font-weight: bold; color: #888;
+            text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+        }
+
+        /* ── Cards grid ── */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+            gap: 14px;
+        }
+        .card {
+            background: white; border-radius: 12px;
+            padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+            position: relative;
+        }
+        .card h3 { font-size: 16px; color: #333; margin-bottom: 4px; }
+        .card .sub { font-size: 12px; color: #888; margin-bottom: 14px; }
+        .btn {
+            display: block; width: 100%; padding: 9px 12px;
+            border-radius: 7px; font-size: 13px; font-weight: bold;
+            border: none; cursor: pointer; text-decoration: none;
+            text-align: center; margin-bottom: 7px; transition: 0.2s;
+        }
+        .btn-blue  { background: #1976d2; color: white; }
+        .btn-blue:hover { background: #1565c0; }
+        .btn-gray  { background: #f5f5f5; color: #333; border: 1px solid #ddd; }
+        .btn-gray:hover { background: #e0e0e0; }
+        .btn-red   { background: #fdecea; color: #c62828; border: 1px solid #f5c6c6; }
+        .btn-red:hover { background: #f5c6c6; }
+        .btn-green { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+        .btn-green:hover { background: #c8e6c9; }
+        .btn-maroon { background: #880e4f; color: white; }
+        .btn-maroon:hover { background: #6a0136; }
+
+        .del-btn {
+            position: absolute; top: 8px; right: 10px;
+            background: none; border: none; color: #ddd;
+            cursor: pointer; font-size: 18px; line-height: 1;
+        }
+        .del-btn:hover { color: #e53935; }
+
+        /* ── Panel (wide box) ── */
+        .panel {
+            background: white; border-radius: 12px;
+            padding: 20px 24px; max-width: 900px;
+            margin: 0 auto 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        }
+        .panel h3 { font-size: 15px; color: #1a3a6b; margin-bottom: 16px;
+                    border-bottom: 2px solid #f0f2f5; padding-bottom: 8px; }
+
+        /* ── Forms ── */
+        .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 130px; }
+        .form-group label { font-size: 12px; color: #555; font-weight: bold; }
+        .form-group input,
+        .form-group select {
+            padding: 9px 11px; border: 1px solid #ddd; border-radius: 7px;
+            font-size: 13px; background: #fafafa;
+        }
+        .form-group input:focus,
+        .form-group select:focus { outline: none; border-color: #1976d2; background: white; }
+        .btn-submit {
+            padding: 9px 18px; border: none; border-radius: 7px;
+            background: #1a3a6b; color: white; font-size: 13px;
+            font-weight: bold; cursor: pointer; white-space: nowrap;
+        }
+        .btn-submit:hover { background: #0f2447; }
+
+        /* ── Table ── */
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { background: #f5f5f5; padding: 8px 12px; text-align: left;
+             font-size: 12px; color: #666; text-transform: uppercase; }
+        td { padding: 9px 12px; border-bottom: 1px solid #f0f0f0; color: #333; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #fafafa; }
+    </style>
 </head>
 <body>
-<div class="container">
-    <h2>Welcome, {{ username }} ({{ role | capitalize }})</h2> 
-    {% if role in ['cr', 'incharge'] %} 
-    <h3>📌 Generate QR for a Subject</h3> 
-    <ul> 
-        {% for subject in subjects %} 
-        <li><a href="{{ url_for('generate_qr_route', subject=subject) }}">{{ subject }}</a></li> 
-        {% endfor %} 
-    </ul> 
-    {% endif %}
 
-    {% if role in ['cr', 'incharge'] %} 
-    <h3>📤 Download Attendance</h3> 
-    <ul> 
-        {% for subject in subjects %} 
-        <li><a href="{{ url_for('export_subject', subject=subject) }}"> {{ subject }} (Session-wise)</a><br> 
-            <a href="{{ url_for('full_report', subject=subject) }}" style="font-size: 0.95em; color: green;"> {{ subject }} (Full Date-wise Report)</a> 
-        </li> 
-        {% endfor %} 
-    </ul> 
-    {% endif %}
+<!-- ── TOP BAR ── -->
+<div class="topbar">
+    <div class="topbar-left">
+        <div>
+            <h1>👋 {{ user.full_name or user.username }}</h1>
+        </div>
+        <span class="role-badge role-{{ user.role }}">{{ user.role }}</span>
+    </div>
+    <a href="/logout">Logout →</a>
+</div>
 
-    {% if daily_counts %}
-    <h3>📈 Today's Attendance Summary</h3>
-    <ul>
-        {% for subject, count in daily_counts.items() %}
-        <li><strong>{{ subject }}:</strong> {{ count }} students marked present</li>
+<!-- ══════════════════════════════════════
+     SUBJECTS — ALL ROLES see this
+═══════════════════════════════════════ -->
+<div class="section">
+    <div class="section-title">
+        {% if user.role == 'coordinator' %}All Subjects (All Classes)
+        {% elif user.role == 'incharge' %}My Class Subjects
+        {% else %}My Subjects{% endif %}
+    </div>
+    <div class="grid">
+        {% for s in subjects %}
+        <div class="card">
+            {% if user.role in ['coordinator','incharge'] %}
+            <a href="/delete_subject/{{ s.id }}" class="del-btn"
+               onclick="return confirm('Delete subject {{ s.name }}?')">×</a>
+            {% endif %}
+            <h3>📚 {{ s.name }}</h3>
+            <div class="sub">{{ s.class_name }}{% if s.teacher_name %} · {{ s.teacher_name }}{% endif %}</div>
+            <a class="btn btn-blue"  href="/generate_qr/{{ s.id }}">📷 Generate QR</a>
+            <a class="btn btn-green" href="/view_attendance/{{ s.id }}">👁 View Attendance</a>
+            <a class="btn btn-gray"  href="/report/{{ s.id }}">📥 Download Report</a>
+        </div>
+        {% else %}
+        <p style="color:#888;font-size:14px;padding:10px 0;">
+            No subjects assigned yet.
+        </p>
         {% endfor %}
-    </ul>
-    {% endif %}
+    </div>
+</div>
 
-    {% if qr_image %} 
-    <h3>✅ QR Generated</h3> 
-    <p style="text-align: center;">Session ID: <strong>{{ session_id }}</strong></p> 
-    <img src="{{ url_for('static', filename='qr_codes/' + qr_image) }}" width="200" alt="QR Code">
-    {% if role in ['cr', 'incharge'] %} 
-    <div style="text-align: center; margin-top: 10px;"> 
-        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success"> 
-            📥 Download Attendance Report 
-        </a> 
-    </div> 
-    {% endif %} 
-    {% endif %}
-    <div style="text-align: center; margin-top: 10px;"> 
-        <a href="{{ url_for('generate_report', subject=subject, session_id=session_id) }}" class="btn btn-success"> 
-            📥 Download Attendance Report 
-        </a> 
-    </div> 
-    <a class="logout" href="/logout">🚪 Logout</a> 
-</body> 
-    </html>
+<!-- ══════════════════════════════════════
+     ADD SUBJECT — coordinator + incharge
+═══════════════════════════════════════ -->
+{% if user.role in ['coordinator','incharge'] %}
+<div class="section">
+    <div class="section-title">Add Subject</div>
+    <div class="panel">
+        <h3>➕ Add New Subject</h3>
+        <form action="/add_subject" method="POST">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Subject Name</label>
+                    <input type="text" name="subject_name" placeholder="e.g. Data Structures" required>
+                </div>
+                {% if user.role == 'coordinator' %}
+                <div class="form-group">
+                    <label>Class</label>
+                    <select name="class_id" required>
+                        <option value="">-- Select Class --</option>
+                        {% for cls in classes %}
+                        <option value="{{ cls[0] }}">{{ cls[1] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+                <div class="form-group">
+                    <label>Assign Teacher (optional)</label>
+                    <select name="teacher_id">
+                        <option value="">-- Select Teacher --</option>
+                        {% for t in teachers %}
+                        <option value="{{ t[0] }}">{{ t[2] or t[1] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn-submit">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- ══════════════════════════════════════
+     INCHARGE PANEL — incharge + coordinator
+═══════════════════════════════════════ -->
+{% if user.role in ['coordinator','incharge'] %}
+<div class="section">
+    <div class="section-title">Class Reports</div>
+    <div class="panel">
+        <h3>📊 Download Class Reports</h3>
+        {% if user.role == 'coordinator' %}
+            {% for cls in classes %}
+            <a class="btn btn-maroon" href="/report/class/{{ cls[0] }}"
+               style="margin-bottom:8px;">
+                📂 {{ cls[1] }} Full Report
+            </a>
+            {% endfor %}
+            <a class="btn btn-maroon" href="/report/all" style="margin-top:4px;">
+                🌐 All Classes — Complete Report
+            </a>
+        {% else %}
+            <a class="btn btn-maroon" href="/report/class/{{ user.class_id }}">
+                📂 My Class Full Report
+            </a>
+        {% endif %}
+        <a class="btn btn-green" href="/students" style="margin-top:8px;">👥 View Student List</a>
+        <a class="btn btn-green" href="/refresh_students" style="margin-top:4px;">🔄 Refresh from Excel</a>
+    </div>
+</div>
+{% endif %}
+
+<!-- ══════════════════════════════════════
+     COORDINATOR ONLY PANELS BELOW
+═══════════════════════════════════════ -->
+{% if user.role == 'coordinator' %}
+
+<!-- ── Classes ── -->
+<div class="section">
+    <div class="section-title">Classes</div>
+    <div class="panel">
+        <h3>🏫 Manage Classes</h3>
+        <form action="/add_class" method="POST" style="margin-bottom:16px;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Class Name</label>
+                    <input type="text" name="class_name" placeholder="e.g. BCA-A" required>
+                </div>
+                <div class="form-group">
+                    <label>Department</label>
+                    <input type="text" name="department" placeholder="e.g. BCA">
+                </div>
+                <button type="submit" class="btn-submit">Add Class</button>
+            </div>
+        </form>
+
+        {% if classes %}
+        <table>
+            <tr><th>Class</th><th>Department</th><th>Incharge</th><th>Assign Incharge</th><th></th></tr>
+            {% for cls in classes %}
+            <tr>
+                <td><strong>{{ cls[1] }}</strong></td>
+                <td>{{ cls[2] or '—' }}</td>
+                <td>{{ cls[3] or '—' }}</td>
+                <td>
+                    <form action="/assign_incharge" method="POST" style="display:flex;gap:6px;">
+                        <input type="hidden" name="class_id" value="{{ cls[0] }}">
+                        <select name="incharge_id" style="padding:5px 8px;border-radius:6px;border:1px solid #ddd;font-size:12px;">
+                            <option value="">Select</option>
+                            {% for inc in incharges %}
+                            <option value="{{ inc[0] }}">{{ inc[2] or inc[1] }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" style="padding:5px 10px;background:#1a3a6b;color:white;border:none;border-radius:6px;font-size:12px;cursor:pointer;">
+                            Assign
+                        </button>
+                    </form>
+                </td>
+                <td>
+                    <a href="/delete_class/{{ cls[0] }}"
+                       onclick="return confirm('Delete class {{ cls[1] }}?')"
+                       style="color:#e53935;font-size:12px;text-decoration:none;">Delete</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p style="color:#888;font-size:13px;">No classes added yet.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ── Users ── -->
+<div class="section">
+    <div class="section-title">User Management</div>
+    <div class="panel">
+        <h3>👤 Add New User</h3>
+        <form action="/add_user" method="POST" style="margin-bottom:20px;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Full Name</label>
+                    <input type="text" name="full_name" placeholder="Dr. Ramesh Kumar" required>
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" name="username" placeholder="ramesh123" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="text" name="password" placeholder="pass@123" required>
+                </div>
+                <div class="form-group">
+                    <label>Role</label>
+                    <select name="role" required>
+                        <option value="teacher">Teacher</option>
+                        <option value="incharge">Incharge</option>
+                        <option value="coordinator">Coordinator</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Class (if incharge)</label>
+                    <select name="class_id">
+                        <option value="">— None —</option>
+                        {% for cls in classes %}
+                        <option value="{{ cls[0] }}">{{ cls[1] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn-submit">Add User</button>
+            </div>
+        </form>
+
+        <h3>All Users</h3>
+        {% if all_users %}
+        <table>
+            <tr><th>Name</th><th>Username</th><th>Role</th><th>Class</th><th></th></tr>
+            {% for u in all_users %}
+            <tr>
+                <td>{{ u[3] or '—' }}</td>
+                <td>{{ u[1] }}</td>
+                <td><span class="role-badge role-{{ u[2] }}">{{ u[2] }}</span></td>
+                <td>{{ u[4] or '—' }}</td>
+                <td>
+                    <a href="/delete_user/{{ u[0] }}"
+                       onclick="return confirm('Delete user {{ u[1] }}?')"
+                       style="color:#e53935;font-size:12px;text-decoration:none;">Delete</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p style="color:#888;font-size:13px;">No users yet.</p>
+        {% endif %}
+    </div>
+</div>
+
+{% endif %} {# end coordinator #}
+
+</body>
+</html>

@@ -2,46 +2,63 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Attendance Confirmation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Status</title>
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: Arial, sans-serif;
-            max-width: 500px;
-            margin: 60px auto;
+            background: #f0f2f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
             padding: 20px;
-            background: linear-gradient(to bottom right, #d0f0c0, #a2d5f2);
-            border: 1px solid #ccc;
-            border-radius: 10px;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 40px 32px;
+            max-width: 360px;
+            width: 100%;
             text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
         }
-
-        h2 {
-            color: #2e7d32;
-            font-size: 1.8rem;
-        }
-
-        p {
-            font-size: 1.1rem;
-            color: #333;
-            margin-top: 20px;
-        }
-
-        a {
-            display: inline-block;
-            margin-top: 30px;
-            text-decoration: none;
-            color: #0066cc;
+        .icon { font-size: 56px; margin-bottom: 16px; }
+        .message {
+            font-size: 18px;
             font-weight: bold;
+            color: #333;
+            line-height: 1.5;
         }
-
-        a:hover {
-            text-decoration: underline;
-        }
+        .message.error { color: #c62828; }
+        .message.success { color: #2e7d32; }
+        .note { font-size: 13px; color: #888; margin-top: 16px; }
     </style>
 </head>
 <body>
-    <h2>✅ Attendance Update</h2>
-    <p>{{ message }}</p>
-    <a href="/scan">⬅️ Scan Again</a>
+<div class="card">
+    {% if '✅' in message %}
+        <div class="icon">✅</div>
+        <div class="message success">{{ message }}</div>
+        <p class="note">You can close this page now.</p>
+    {% else %}
+        <div class="icon">❌</div>
+        <div class="message error">{{ message }}</div>
+        <p class="note">If you think this is a mistake, contact your teacher.</p>
+    {% endif %}
+</div>
+
+{% if '✅' in message %}
+<script>
+    // Success hone par localStorage mein set karo
+    // Taaki same device dobara same session mein attend na kar sake
+    const sid = "{{ session_id }}";
+    if (sid) {
+        localStorage.setItem("attended_" + sid, "1");
+    }
+</script>
+{% endif %}
+
 </body>
 </html>
