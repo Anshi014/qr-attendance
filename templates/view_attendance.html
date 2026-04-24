@@ -13,25 +13,23 @@
             min-height: 100vh;
         }
 
-        /* Top bar */
         .topbar {
-            max-width: 900px; margin: 0 auto 24px;
+            max-width: 960px; margin: 0 auto 24px;
             background: linear-gradient(135deg, #1a3a6b, #8b1a1a);
             border-radius: 14px; padding: 14px 20px;
             display: flex; justify-content: space-between; align-items: center;
         }
         .topbar h1 { color: white; font-size: 17px; }
+        .topbar .topbar-right { display: flex; gap: 8px; }
         .topbar a {
-            color: rgba(255,255,255,0.8); text-decoration: none;
+            color: rgba(255,255,255,0.85); text-decoration: none;
             font-size: 13px; padding: 7px 14px;
-            background: rgba(255,255,255,0.15);
-            border-radius: 8px;
+            background: rgba(255,255,255,0.15); border-radius: 8px;
         }
         .topbar a:hover { background: rgba(255,255,255,0.25); }
 
-        /* Stats row */
         .stats-row {
-            max-width: 900px; margin: 0 auto 20px;
+            max-width: 960px; margin: 0 auto 20px;
             display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr));
             gap: 14px;
         }
@@ -48,16 +46,16 @@
         .num-blue   { color: #1976d2; }
         .num-green  { color: #2e7d32; }
         .num-orange { color: #e65100; }
+        .num-purple { color: #6a1b9a; }
 
-        /* Action buttons */
         .actions {
-            max-width: 900px; margin: 0 auto 20px;
+            max-width: 960px; margin: 0 auto 20px;
             display: flex; gap: 10px; flex-wrap: wrap;
         }
         .btn {
             padding: 9px 18px; border-radius: 8px; font-size: 13px;
             font-weight: bold; text-decoration: none; border: none;
-            cursor: pointer; transition: 0.2s;
+            cursor: pointer; transition: 0.2s; display: inline-block;
         }
         .btn-blue   { background: #1976d2; color: white; }
         .btn-blue:hover { background: #1565c0; }
@@ -66,9 +64,8 @@
         .btn-gray   { background: #eee; color: #333; border: 1px solid #ddd; }
         .btn-gray:hover { background: #e0e0e0; }
 
-        /* Search */
         .search-wrap {
-            max-width: 900px; margin: 0 auto 16px;
+            max-width: 960px; margin: 0 auto 16px;
         }
         .search-wrap input {
             width: 100%; padding: 10px 14px;
@@ -77,9 +74,8 @@
         }
         .search-wrap input:focus { outline: none; border-color: #1976d2; }
 
-        /* Table */
         .table-wrap {
-            max-width: 900px; margin: 0 auto;
+            max-width: 960px; margin: 0 auto;
             background: white; border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.07);
             overflow: hidden;
@@ -117,20 +113,28 @@
             text-align: center; padding: 48px 20px;
             color: #aaa; font-size: 15px;
         }
+        .empty-msg span { display: block; font-size: 13px; margin-top: 8px; }
 
-        /* Footer note */
-        .footer { max-width: 900px; margin: 16px auto 0;
+        .footer { max-width: 960px; margin: 16px auto 0;
                   text-align: center; font-size: 12px; color: #aaa; }
+
+        .badge-session {
+            font-size: 11px;
+            background: #fff3e0; color: #e65100;
+            padding: 2px 8px; border-radius: 8px;
+        }
     </style>
 </head>
 <body>
 
-<!-- Top Bar -->
 <div class="topbar">
-    <h1>📋 {{ subject.name }} — Live Attendance &nbsp;
+    <h1>📋 {{ subject.name }} &nbsp;
         <span style="font-size:13px;opacity:0.7;">{{ subject.class_name }}</span>
     </h1>
-    <a href="/dashboard">← Dashboard</a>
+    <div class="topbar-right">
+        <a href="/generate_qr/{{ subject.id }}">📷 QR</a>
+        <a href="/dashboard">← Dashboard</a>
+    </div>
 </div>
 
 <!-- Stats -->
@@ -141,12 +145,12 @@
     </div>
     <div class="stat-card">
         <div class="num num-green">{{ total_present }}</div>
-        <div class="label">Present (All Sessions)</div>
+        <div class="label">Unique Present</div>
     </div>
     <div class="stat-card">
         {% set absent = total_students - total_present %}
-        <div class="num num-orange">{{ absent if absent > 0 else 0 }}</div>
-        <div class="label">Not Yet Marked</div>
+        <div class="num num-orange">{{ [absent, 0]|max }}</div>
+        <div class="label">Never Marked</div>
     </div>
     <div class="stat-card">
         {% if total_students > 0 %}
@@ -154,12 +158,16 @@
         {% else %}
             {% set pct = 0 %}
         {% endif %}
-        <div class="num num-green">{{ pct }}%</div>
-        <div class="label">Attendance %</div>
+        <div class="num num-purple">{{ pct }}%</div>
+        <div class="label">Coverage</div>
+    </div>
+    <div class="stat-card">
+        <div class="num num-blue" style="font-size:24px;">{{ records|length }}</div>
+        <div class="label">Total Entries</div>
     </div>
 </div>
 
-<!-- Action Buttons -->
+<!-- Actions -->
 <div class="actions">
     <a class="btn btn-blue" href="/generate_qr/{{ subject.id }}">📷 Generate QR</a>
     <a class="btn btn-maroon" href="/report/{{ subject.id }}">📥 Download Excel Report</a>
@@ -169,7 +177,7 @@
 <!-- Search -->
 <div class="search-wrap">
     <input type="text" id="searchInput"
-           placeholder="🔍 Search by roll number or name..."
+           placeholder="🔍 Search by roll number, name, or session..."
            onkeyup="filterTable()">
 </div>
 
@@ -193,7 +201,8 @@
                 <td style="color:#aaa;font-size:12px;">{{ loop.index }}</td>
                 <td><span class="roll-badge">{{ rec[0] }}</span></td>
                 <td>
-                    <span class="present-dot"></span>{{ rec[1] }}
+                    <span class="present-dot"></span>
+                    {{ rec[1] if rec[1] else rec[0] }}
                 </td>
                 <td><span class="session-badge">{{ rec[2] }}</span></td>
                 <td style="font-size:13px;color:#555;">{{ rec[3] }}</td>
@@ -205,35 +214,28 @@
     {% else %}
     <div class="empty-msg">
         {% if message %}
-            {{ message }}<br>
-            <span style="font-size:13px;margin-top:8px;display:block;">
-                Generate a QR and ask students to scan it.
-            </span>
+            {{ message }}
+            <span>Generate a QR and ask students to scan it.</span>
         {% else %}
-            📭 No attendance marked for this subject yet.<br>
-            <span style="font-size:13px;margin-top:8px;display:block;">
-                Generate a QR and ask students to scan it.
-            </span>
+            📭 No attendance marked for this subject yet.
+            <span>Generate a QR and ask students to scan it.</span>
         {% endif %}
     </div>
     {% endif %}
 </div>
 
 <div class="footer">
-    Showing all-time attendance records for {{ subject.name }} · Auto-refresh every 30s
+    Showing all-time attendance for <strong>{{ subject.name }}</strong>
+    ({{ subject.class_name }}) · Auto-refresh every 30s
 </div>
 
 <script>
     function filterTable() {
         const input = document.getElementById("searchInput").value.toLowerCase();
-        const rows  = document.querySelectorAll("#attendanceTable tbody tr");
-        rows.forEach(row => {
-            const text = row.textContent.toLowerCase();
-            row.style.display = text.includes(input) ? "" : "none";
+        document.querySelectorAll("#attendanceTable tbody tr").forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(input) ? "" : "none";
         });
     }
-
-    // Auto-refresh every 30 seconds
     setTimeout(() => location.reload(), 30000);
 </script>
 

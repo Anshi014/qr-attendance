@@ -288,6 +288,57 @@ def get_subject_by_id(subject_id):
     return None
 
 # ══════════════════════════════════════════
+# STUDENT MANAGEMENT  ← NEW
+# ══════════════════════════════════════════
+
+def get_students_by_class(class_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT roll, name, class_id FROM students WHERE class_id = ? ORDER BY roll", (class_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def get_all_students():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.roll, s.name, s.class_id, cl.name
+        FROM students s
+        LEFT JOIN classes cl ON s.class_id = cl.id
+        ORDER BY cl.name, s.roll
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def add_student(roll, name, class_id):
+    """Add or update a student."""
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO students (roll, name, class_id) VALUES (?, ?, ?)
+            ON CONFLICT(roll) DO UPDATE SET name=excluded.name, class_id=excluded.class_id
+        """, (roll.strip().upper(), name.strip(), class_id))
+        conn.commit()
+        return True, "Student added!"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+def delete_student(roll):
+    """Delete a student by roll number."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM students WHERE roll = ?", (roll.upper(),))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+# ══════════════════════════════════════════
 # ATTENDANCE
 # ══════════════════════════════════════════
 
@@ -347,33 +398,52 @@ def get_student_name(roll):
     conn.close()
     return result[0] if result else None
 
+def get_attendance_records(subject_id):
+    """Fetch all attendance records for a subject with student name fallback."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT a.roll, 
+               COALESCE(a.name, s.name, a.roll) as student_name,
+               a.session_id, 
+               a.timestamp, 
+               a.ip_address
+        FROM attendance a
+        LEFT JOIN students s ON a.roll = s.roll
+        WHERE a.subject_id = ?
+        ORDER BY a.timestamp DESC
+    """, (subject_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
 # ══════════════════════════════════════════
-# STUDENTS
+# STUDENTS — Excel seed
 # ══════════════════════════════════════════
 
 def seed_students_from_excel(class_id=None):
     try:
         df = pd.read_excel("student_list.xlsx")
         df.rename(columns=lambda x: x.strip().lower(), inplace=True)
-        df["roll"] = df["roll"].str.strip().str.upper()
-        df["name"] = df["name"].str.strip()
+        df["roll"] = df["roll"].astype(str).str.strip().str.upper()
+        df["name"] = df["name"].astype(str).str.strip()
 
-        # ✅ FIX: Agar Excel mein class_id column nahi hai toh parameter wala use karo
         if "class_id" not in df.columns:
             df["class_id"] = class_id
 
         conn = get_db()
         c = conn.cursor()
+        count = 0
         for _, row in df.iterrows():
-            # Agar column tha lekin row mein NaN hai toh bhi parameter wala use karo
-            effective_class_id = row["class_id"] if pd.notna(row["class_id"]) else class_id
+            effective_class_id = row["class_id"] if pd.notna(row.get("class_id")) else class_id
             c.execute("""
                 INSERT INTO students (roll, name, class_id) VALUES (?, ?, ?)
                 ON CONFLICT(roll) DO UPDATE SET name=excluded.name, class_id=excluded.class_id
             """, (row["roll"], row["name"], effective_class_id))
+            count += 1
         conn.commit()
         conn.close()
-        print("✅ Students seeded!")
+        print(f"✅ {count} students seeded!")
     except Exception as e:
         print(f"❌ Error seeding: {e}")
 
@@ -385,7 +455,7 @@ def load_student_list():
         return None
 
 # ══════════════════════════════════════════
-# REPORT
+# REPORT  ← IMPROVED: date-wise + percentage
 # ══════════════════════════════════════════
 
 def generate_report_for_subject(subject_id, class_id):
@@ -393,28 +463,55 @@ def generate_report_for_subject(subject_id, class_id):
     c = conn.cursor()
     c.execute("SELECT roll, name FROM students WHERE class_id = ? ORDER BY roll", (class_id,))
     students = c.fetchall()
+
+    # Get all attendance records with dates
     c.execute("""
-        SELECT roll, DATE(timestamp) as date FROM attendance
-        WHERE subject_id = ? ORDER BY date
+        SELECT roll, DATE(timestamp) as date, session_id
+        FROM attendance
+        WHERE subject_id = ?
+        ORDER BY date, roll
     """, (subject_id,))
     records = c.fetchall()
     conn.close()
 
     student_df = pd.DataFrame(students, columns=["Roll", "Name"])
-    if not records:
+    if student_df.empty:
         return student_df, []
 
-    df = pd.DataFrame(records, columns=["Roll", "Date"])
-    df["Status"] = "P"
-    pivot = df.pivot_table(index="Roll", columns="Date",
-                           values="Status", aggfunc="first", fill_value="A")
-    final_df = pd.merge(student_df, pivot, on="Roll", how="left").fillna("A")
-    date_cols = [col for col in final_df.columns if col not in ["Roll", "Name"]]
-    final_df["Total Days"] = len(date_cols)
-    final_df["Days Present"] = final_df[date_cols].apply(
-        lambda row: sum(x == "P" for x in row), axis=1)
-    final_df["Attendance %"] = (
-        (final_df["Days Present"] / len(date_cols) * 100).round(2)
-        if date_cols else 0
+    if not records:
+        # Return with all A
+        date_cols = []
+        student_df["Total Classes"] = 0
+        student_df["Classes Present"] = 0
+        student_df["Attendance %"] = 0.0
+        return student_df, date_cols
+
+    att_df = pd.DataFrame(records, columns=["Roll", "Date", "Session"])
+    # One entry per roll per date (in case of multiple sessions same day, count once per session)
+    att_df = att_df.drop_duplicates(subset=["Roll", "Date"])
+    att_df["Status"] = "P"
+
+    pivot = att_df.pivot_table(
+        index="Roll", columns="Date",
+        values="Status", aggfunc="first", fill_value="A"
     )
+    pivot.reset_index(inplace=True)
+
+    final_df = pd.merge(student_df, pivot, on="Roll", how="left")
+    date_cols = [col for col in final_df.columns if col not in ["Roll", "Name"]]
+
+    # Fill missing (students who never attended) with "A"
+    for col in date_cols:
+        final_df[col] = final_df[col].fillna("A")
+
+    total_classes = len(date_cols)
+    final_df["Total Classes"] = total_classes
+    final_df["Classes Present"] = final_df[date_cols].apply(
+        lambda row: sum(x == "P" for x in row), axis=1
+    )
+    final_df["Attendance %"] = (
+        (final_df["Classes Present"] / total_classes * 100).round(2)
+        if total_classes > 0 else 0.0
+    )
+
     return final_df, date_cols

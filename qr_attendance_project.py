@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 from database_logic import (
     init_db, seed_students_from_excel, load_student_list,
     roll_exists, has_already_submitted, mark_attendance, get_student_name,
@@ -6,7 +6,9 @@ from database_logic import (
     add_class, delete_class, get_all_classes, assign_incharge_to_class,
     add_subject, delete_subject, assign_teacher_to_subject,
     get_subjects_for_user, get_subject_by_id,
-    authenticate_user, generate_report_for_subject
+    authenticate_user, generate_report_for_subject,
+    get_attendance_records,
+    get_students_by_class, get_all_students, add_student, delete_student
 )
 from qr_generator import generate_qr, generate_device_token, is_device_allowed, register_device
 import sqlite3
@@ -17,7 +19,6 @@ app.secret_key = "rbu_qr_secret_2024"
 
 init_db()
 
-# ✅ FIX: Startup pe sabhi classes ke liye students seed karo
 def seed_all_classes():
     conn = sqlite3.connect("attendance.db")
     c = conn.cursor()
@@ -77,7 +78,7 @@ def dashboard():
     if redir: return redir
     user      = current_user()
     subjects  = get_subjects_for_user(user)
-    classes   = get_all_classes() if user["role"] == "coordinator" else []
+    classes   = get_all_classes() if user["role"] in ["coordinator", "incharge"] else []
     all_users = get_all_users()   if user["role"] == "coordinator" else []
     teachers  = get_teachers()
     incharges = get_incharges()
@@ -175,6 +176,56 @@ def assign_teacher_route():
     teacher_id = int(request.form.get("teacher_id"))
     assign_teacher_to_subject(subject_id, teacher_id)
     return redirect(url_for("dashboard"))
+
+# ─────────────────────────────────────────────
+# STUDENT MANAGEMENT  ← NEW
+# ─────────────────────────────────────────────
+
+@app.route("/students")
+def show_students():
+    redir = require_login()
+    if redir: return redir
+    user = current_user()
+    classes = get_all_classes()
+
+    # Filter by class_id if given
+    class_id = request.args.get("class_id")
+    if class_id:
+        class_id = int(class_id)
+        students = get_students_by_class(class_id)
+    elif user["role"] == "coordinator":
+        students = get_all_students()
+        class_id = None
+    else:
+        class_id = user.get("class_id")
+        students = get_students_by_class(class_id) if class_id else []
+
+    return render_template("students.html",
+        user=user,
+        students=students,
+        classes=classes,
+        selected_class_id=class_id
+    )
+
+@app.route("/add_student", methods=["POST"])
+def add_student_route():
+    err = require_role("coordinator", "incharge")
+    if err: return err
+    roll     = request.form.get("roll", "").strip()
+    name     = request.form.get("name", "").strip()
+    class_id = request.form.get("class_id", "")
+    if not roll or not name or not class_id:
+        return redirect(url_for("show_students"))
+    add_student(roll, name, int(class_id))
+    return redirect(url_for("show_students", class_id=class_id))
+
+@app.route("/delete_student/<roll>")
+def delete_student_route(roll):
+    err = require_role("coordinator", "incharge")
+    if err: return err
+    class_id = request.args.get("class_id", "")
+    delete_student(roll)
+    return redirect(url_for("show_students", class_id=class_id))
 
 # ─────────────────────────────────────────────
 # QR GENERATION
@@ -279,6 +330,40 @@ def submit_attendance():
         session_id=session_id)
 
 # ─────────────────────────────────────────────
+# VIEW ATTENDANCE  ← FIXED
+# ─────────────────────────────────────────────
+
+@app.route("/view_attendance/<int:subject_id>")
+def view_attendance(subject_id):
+    redir = require_login()
+    if redir: return redir
+
+    subject = get_subject_by_id(subject_id)
+    if not subject:
+        return "❌ Subject not found."
+
+    # Use the dedicated function that properly joins students table
+    records = get_attendance_records(subject_id)
+
+    # Total students in class
+    conn = sqlite3.connect("attendance.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM students WHERE class_id = ?", (subject["class_id"],))
+    total_students = cursor.fetchone()[0]
+    conn.close()
+
+    # Unique students who have marked attendance at least once
+    total_present = len(set(r[0] for r in records)) if records else 0
+
+    return render_template("view_attendance.html",
+        subject=subject,
+        records=records,
+        total_students=total_students,
+        total_present=total_present,
+        message="" if records else "⚠️ No attendance records found for this subject yet."
+    )
+
+# ─────────────────────────────────────────────
 # REPORTS
 # ─────────────────────────────────────────────
 
@@ -303,15 +388,16 @@ def report(subject_id):
     import pandas as pd
 
     final_df, date_cols = generate_report_for_subject(subject_id, subject["class_id"])
-    if not date_cols and len(final_df.columns) == 2:
-        return f"⚠️ No attendance data for {subject['name']} yet."
 
     os.makedirs("exports", exist_ok=True)
     month_str = dt.now().strftime("%B_%Y")
     filename  = f"{subject['class_name']}_{subject['name']}_{month_str}.xlsx"
     filepath  = os.path.join("exports", filename)
-    final_df.to_excel(filepath, index=False)
-    _apply_colors(filepath)
+
+    with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+        final_df.to_excel(writer, sheet_name="Attendance", index=False)
+
+    _apply_colors(filepath, date_cols)
     return redirect(url_for("download_export", filename=filename))
 
 @app.route("/report/class/<int:class_id>")
@@ -345,8 +431,9 @@ def report_class(class_id):
 
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
         for sub_id, sub_name in subs:
-            final_df, _ = generate_report_for_subject(sub_id, class_id)
-            final_df.to_excel(writer, sheet_name=sub_name[:31], index=False)
+            final_df, date_cols = generate_report_for_subject(sub_id, class_id)
+            sheet_name = sub_name[:31]
+            final_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     _apply_colors(filepath)
     return redirect(url_for("download_export", filename=filename))
@@ -384,19 +471,63 @@ def report_all():
     _apply_colors(filepath)
     return redirect(url_for("download_export", filename=filename))
 
-def _apply_colors(filepath):
+def _apply_colors(filepath, date_cols=None):
+    """Apply color formatting to the Excel report."""
     from openpyxl import load_workbook
-    from openpyxl.styles import PatternFill, Font
-    wb    = load_workbook(filepath)
-    green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    red   = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
+    from openpyxl.styles import PatternFill, Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = load_workbook(filepath)
+    green  = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    red    = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
+    yellow = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    header_fill = PatternFill(start_color="1A3A6B", end_color="1A3A6B", fill_type="solid")
+
     for ws in wb.worksheets:
+        # Style header row
         for cell in ws[1]:
-            cell.font = Font(bold=True)
-        for row in ws.iter_rows(min_row=2, min_col=3, max_col=ws.max_column - 3):
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
+
+        # Find column indices for date columns and summary columns
+        header_vals = [cell.value for cell in ws[1]]
+
+        for row in ws.iter_rows(min_row=2):
             for cell in row:
-                if cell.value == "P":   cell.fill = green
-                elif cell.value == "A": cell.fill = red
+                col_name = header_vals[cell.column - 1] if cell.column <= len(header_vals) else ""
+                if cell.value == "P":
+                    cell.fill = green
+                    cell.alignment = Alignment(horizontal="center")
+                elif cell.value == "A":
+                    cell.fill = red
+                    cell.alignment = Alignment(horizontal="center")
+                elif col_name == "Attendance %":
+                    # Color code attendance %
+                    try:
+                        pct = float(cell.value)
+                        if pct >= 75:
+                            cell.fill = green
+                        elif pct >= 60:
+                            cell.fill = yellow
+                        else:
+                            cell.fill = red
+                    except (TypeError, ValueError):
+                        pass
+                    cell.alignment = Alignment(horizontal="center")
+
+        # Auto-size columns
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                try:
+                    if cell.value:
+                        max_len = max(max_len, len(str(cell.value)))
+                except:
+                    pass
+            ws.column_dimensions[col_letter].width = min(max_len + 4, 20)
+
     wb.save(filepath)
 
 # ─────────────────────────────────────────────
@@ -409,16 +540,6 @@ def download_export(filename):
     exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
     return send_from_directory(exports_dir, filename, as_attachment=True)
 
-@app.route("/students")
-def show_students():
-    redir = require_login()
-    if redir: return redir
-    df = load_student_list()
-    if df is None:
-        return "❌ Could not load student list."
-    return df.to_html(index=False)
-
-# ✅ FIX: class_id parameter support added
 @app.route("/refresh_students")
 def refresh_students():
     err = require_role("coordinator", "incharge")
@@ -437,46 +558,6 @@ def get_name():
     name = get_student_name(roll)
     return name if name else "❌ Not found"
 
-
-@app.route("/view_attendance/<int:subject_id>")
-def view_attendance(subject_id):
-    redir = require_login()
-    if redir: return redir
-    
-    # Fetch subject details
-    subject = get_subject_by_id(subject_id)
-    if not subject:
-        return "❌ Subject not found."
-    
-    # Fetch attendance records
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT roll, name, session_id, timestamp, ip_address FROM attendance WHERE subject_id = ? ORDER BY timestamp DESC", (subject_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    
-    if not rows:
-        return render_template("view_attendance.html", 
-            subject=subject,
-            records=[], 
-            message="⚠️ No attendance records found for this subject yet.",
-            total_students=0,
-            total_present=0)
-    
-    # Calculate statistics
-    total_present = len(set(row[0] for row in rows))  # Count unique rolls marked present
-    # Get total students in the class
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM students WHERE class_id = ?", (subject["class_id"],))
-    total_students = cursor.fetchone()[0]
-    conn.close()
-    
-    return render_template("view_attendance.html", 
-        subject=subject,
-        records=rows,
-        total_students=total_students,
-        total_present=total_present)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
