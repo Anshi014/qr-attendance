@@ -1,14 +1,20 @@
 import sqlite3
 from datetime import datetime
 import pandas as pd
+import os
 
-DB = "attendance.db"
+DB = os.environ.get("DB_PATH", "attendance.db")
+
 
 def get_db():
-    return sqlite3.connect(DB)
+    conn = sqlite3.connect(DB)
+    conn.execute("PRAGMA journal_mode=WAL")   # better concurrent reads
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
 
 # ══════════════════════════════════════════
-# INIT — create all tables
+# INIT — create all tables + indexes
 # ══════════════════════════════════════════
 
 def init_db():
@@ -79,6 +85,31 @@ def init_db():
         )
     """)
 
+    # ── Persistent device-token store (replaces the old in-memory dict) ───────
+    # status: 'issued' | 'used'
+    # expires_at: tokens auto-expire after 24h via cleanup_expired_tokens()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS session_tokens (
+            session_id   TEXT NOT NULL,
+            device_token TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'issued'
+                         CHECK(status IN ('issued','used')),
+            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at   TEXT NOT NULL
+                         DEFAULT (datetime('now', '+24 hours')),
+            PRIMARY KEY (session_id, device_token)
+        )
+    """)
+
+    # ── Performance indexes ───────────────────────────────────────────────────
+    c.execute("CREATE INDEX IF NOT EXISTS idx_att_subject   ON attendance(subject_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_att_sess_roll ON attendance(session_id, roll)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_att_sess_dev  ON attendance(session_id, device_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_att_roll      ON attendance(roll)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_students_cls  ON students(class_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_tok_sess      ON session_tokens(session_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_tok_expires   ON session_tokens(expires_at)")
+
     conn.commit()
 
     # Default coordinator
@@ -89,9 +120,10 @@ def init_db():
             VALUES ('coordinator', 'coord123', 'coordinator', 'Coordinator')
         """)
         conn.commit()
-        print("✅ Default coordinator: username=coordinator, password=coord123")
+        print("Default coordinator created — username: coordinator  password: coord123")
 
     conn.close()
+
 
 # ══════════════════════════════════════════
 # USER MANAGEMENT
@@ -100,7 +132,10 @@ def init_db():
 def get_user_by_username(username):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, username, password, role, full_name, class_id FROM users WHERE username = ?", (username,))
+    c.execute(
+        "SELECT id, username, password, role, full_name, class_id FROM users WHERE username = ?",
+        (username,)
+    )
     row = c.fetchone()
     conn.close()
     if row:
@@ -108,11 +143,13 @@ def get_user_by_username(username):
                 "role": row[3], "full_name": row[4], "class_id": row[5]}
     return None
 
+
 def authenticate_user(username, password):
     user = get_user_by_username(username)
     if user and user["password"] == password:
         return user
     return None
+
 
 def add_user(username, password, role, full_name="", class_id=None):
     conn = get_db()
@@ -129,12 +166,14 @@ def add_user(username, password, role, full_name="", class_id=None):
     finally:
         conn.close()
 
+
 def delete_user(user_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
     conn.close()
+
 
 def get_all_users():
     conn = get_db()
@@ -149,6 +188,7 @@ def get_all_users():
     conn.close()
     return rows
 
+
 def get_teachers():
     conn = get_db()
     c = conn.cursor()
@@ -157,6 +197,7 @@ def get_teachers():
     conn.close()
     return rows
 
+
 def get_incharges():
     conn = get_db()
     c = conn.cursor()
@@ -164,6 +205,7 @@ def get_incharges():
     rows = c.fetchall()
     conn.close()
     return rows
+
 
 # ══════════════════════════════════════════
 # CLASS MANAGEMENT
@@ -181,12 +223,14 @@ def add_class(name, department=""):
     finally:
         conn.close()
 
+
 def delete_class(class_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM classes WHERE id = ?", (class_id,))
     conn.commit()
     conn.close()
+
 
 def get_all_classes():
     conn = get_db()
@@ -201,6 +245,7 @@ def get_all_classes():
     conn.close()
     return rows
 
+
 def assign_incharge_to_class(class_id, incharge_id):
     conn = get_db()
     c = conn.cursor()
@@ -208,6 +253,7 @@ def assign_incharge_to_class(class_id, incharge_id):
     c.execute("UPDATE users SET class_id = ? WHERE id = ?", (class_id, incharge_id))
     conn.commit()
     conn.close()
+
 
 # ══════════════════════════════════════════
 # SUBJECT MANAGEMENT
@@ -226,6 +272,7 @@ def add_subject(name, class_id, teacher_id=None):
     finally:
         conn.close()
 
+
 def delete_subject(subject_id):
     conn = get_db()
     c = conn.cursor()
@@ -233,12 +280,14 @@ def delete_subject(subject_id):
     conn.commit()
     conn.close()
 
+
 def assign_teacher_to_subject(subject_id, teacher_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("UPDATE subjects SET teacher_id = ? WHERE id = ?", (teacher_id, subject_id))
     conn.commit()
     conn.close()
+
 
 def get_subjects_for_user(user):
     conn = get_db()
@@ -273,6 +322,7 @@ def get_subjects_for_user(user):
     conn.close()
     return [{"id": r[0], "name": r[1], "class_name": r[2], "teacher_name": r[3]} for r in rows]
 
+
 def get_subject_by_id(subject_id):
     conn = get_db()
     c = conn.cursor()
@@ -287,17 +337,20 @@ def get_subject_by_id(subject_id):
         return {"id": row[0], "name": row[1], "class_id": row[2], "class_name": row[3]}
     return None
 
+
 # ══════════════════════════════════════════
-# STUDENT MANAGEMENT  ← NEW
+# STUDENT MANAGEMENT
 # ══════════════════════════════════════════
 
 def get_students_by_class(class_id):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT roll, name, class_id FROM students WHERE class_id = ? ORDER BY roll", (class_id,))
+    c.execute("SELECT roll, name, class_id FROM students WHERE class_id = ? ORDER BY roll",
+              (class_id,))
     rows = c.fetchall()
     conn.close()
     return rows
+
 
 def get_all_students():
     conn = get_db()
@@ -312,8 +365,9 @@ def get_all_students():
     conn.close()
     return rows
 
+
 def add_student(roll, name, class_id):
-    """Add or update a student."""
+    """Add or update a student (upsert on roll)."""
     conn = get_db()
     c = conn.cursor()
     try:
@@ -328,6 +382,7 @@ def add_student(roll, name, class_id):
     finally:
         conn.close()
 
+
 def delete_student(roll):
     """Delete a student by roll number."""
     conn = get_db()
@@ -338,6 +393,82 @@ def delete_student(roll):
     conn.close()
     return affected > 0
 
+
+# ══════════════════════════════════════════
+# SESSION TOKEN MANAGEMENT  (DB-persisted)
+# ══════════════════════════════════════════
+
+def db_issue_token(session_id, device_token):
+    """
+    Record a newly-issued device token as 'issued'.
+    Called by qr_generator.issue_device_token() right after the token is created.
+    """
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO session_tokens (session_id, device_token, status)
+            VALUES (?, ?, 'issued')
+            ON CONFLICT(session_id, device_token) DO NOTHING
+        """, (session_id, device_token))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def db_consume_token(session_id, device_token):
+    """
+    Atomically check that the token is 'issued' then flip it to 'used'.
+
+    Returns (True, None) on success.
+    Returns (False, reason) on failure — reason is one of:
+        'invalid_session'    — no tokens recorded for this session at all
+        'unrecognized_token' — token was never issued for this session
+        'already_used'       — token already consumed
+    """
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT status FROM session_tokens WHERE session_id=? AND device_token=?",
+            (session_id, device_token)
+        )
+        row = c.fetchone()
+
+        if row is None:
+            # Distinguish missing session from missing token
+            c.execute("SELECT 1 FROM session_tokens WHERE session_id=?", (session_id,))
+            if c.fetchone() is None:
+                return False, "invalid_session"
+            return False, "unrecognized_token"
+
+        if row[0] == "used":
+            return False, "already_used"
+
+        c.execute(
+            "UPDATE session_tokens SET status='used' WHERE session_id=? AND device_token=?",
+            (session_id, device_token)
+        )
+        conn.commit()
+        return True, None
+    finally:
+        conn.close()
+
+
+def cleanup_expired_tokens():
+    """Remove tokens older than their expires_at. Safe to call anytime."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM session_tokens WHERE expires_at < datetime('now')")
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
 # ══════════════════════════════════════════
 # ATTENDANCE
 # ══════════════════════════════════════════
@@ -346,30 +477,39 @@ def has_already_submitted(session_id, device_id=None, roll=None, ip_address=None
     conn = get_db()
     c = conn.cursor()
     if roll:
-        c.execute("SELECT 1 FROM attendance WHERE session_id = ? AND roll = ?", (session_id, roll.upper()))
+        c.execute("SELECT 1 FROM attendance WHERE session_id = ? AND roll = ?",
+                  (session_id, roll.upper()))
         if c.fetchone():
-            conn.close(); return True, "roll"
+            conn.close()
+            return True, "roll"
     if device_id:
-        c.execute("SELECT 1 FROM attendance WHERE session_id = ? AND device_id = ?", (session_id, device_id))
+        c.execute("SELECT 1 FROM attendance WHERE session_id = ? AND device_id = ?",
+                  (session_id, device_id))
         if c.fetchone():
-            conn.close(); return True, "device"
+            conn.close()
+            return True, "device"
     if ip_address:
-        c.execute("SELECT 1 FROM session_ip_log WHERE session_id = ? AND ip_address = ?", (session_id, ip_address))
+        c.execute("SELECT 1 FROM session_ip_log WHERE session_id = ? AND ip_address = ?",
+                  (session_id, ip_address))
         if c.fetchone():
-            conn.close(); return True, "ip"
+            conn.close()
+            return True, "ip"
     conn.close()
     return False, None
+
 
 def roll_exists(roll, class_id=None):
     conn = get_db()
     c = conn.cursor()
     if class_id:
-        c.execute("SELECT 1 FROM students WHERE roll = ? AND class_id = ?", (roll.upper(), class_id))
+        c.execute("SELECT 1 FROM students WHERE roll = ? AND class_id = ?",
+                  (roll.upper(), class_id))
     else:
         c.execute("SELECT 1 FROM students WHERE roll = ?", (roll.upper(),))
     result = c.fetchone()
     conn.close()
     return result is not None
+
 
 def mark_attendance(subject_id, subject_name, class_id, session_id, roll, name, device_id, ip_address):
     conn = get_db()
@@ -378,17 +518,22 @@ def mark_attendance(subject_id, subject_name, class_id, session_id, roll, name, 
     try:
         c.execute("""
             INSERT INTO attendance
-            (subject_id, subject_name, class_id, session_id, roll, name, device_id, ip_address, timestamp)
+            (subject_id, subject_name, class_id, session_id, roll, name,
+             device_id, ip_address, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (subject_id, subject_name, class_id, session_id, roll.upper(), name, device_id, ip_address, timestamp))
-        c.execute("INSERT OR IGNORE INTO session_ip_log (session_id, ip_address) VALUES (?, ?)",
-                  (session_id, ip_address))
+        """, (subject_id, subject_name, class_id, session_id,
+              roll.upper(), name, device_id, ip_address, timestamp))
+        c.execute(
+            "INSERT OR IGNORE INTO session_ip_log (session_id, ip_address) VALUES (?, ?)",
+            (session_id, ip_address)
+        )
         conn.commit()
         return True
     except sqlite3.IntegrityError:
         return False
     finally:
         conn.close()
+
 
 def get_student_name(roll):
     conn = get_db()
@@ -398,15 +543,16 @@ def get_student_name(roll):
     conn.close()
     return result[0] if result else None
 
+
 def get_attendance_records(subject_id):
-    """Fetch all attendance records for a subject with student name fallback."""
+    """Raw log — roll, name, session_id, timestamp, ip. Used for the live-log tab."""
     conn = get_db()
     c = conn.cursor()
     c.execute("""
-        SELECT a.roll, 
-               COALESCE(a.name, s.name, a.roll) as student_name,
-               a.session_id, 
-               a.timestamp, 
+        SELECT a.roll,
+               COALESCE(s.name, a.name, a.roll) AS student_name,
+               a.session_id,
+               a.timestamp,
                a.ip_address
         FROM attendance a
         LEFT JOIN students s ON a.roll = s.roll
@@ -417,45 +563,131 @@ def get_attendance_records(subject_id):
     conn.close()
     return rows
 
+
+# ══════════════════════════════════════════
+# ATTENDANCE VIEW — per-student summary
+# ══════════════════════════════════════════
+
+def get_attendance_summary(subject_id, class_id):
+    """
+    Returns (summary_list, all_dates) for the view_attendance template.
+
+    Each entry in summary_list is a dict:
+        roll, name, classes_present, total_classes, pct, dates (dict date->P/A)
+
+    all_dates is a sorted list of ISO date strings representing every class held.
+    """
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("SELECT roll, name FROM students WHERE class_id=? ORDER BY roll", (class_id,))
+    students = c.fetchall()
+
+    c.execute("""
+        SELECT roll, DATE(timestamp) AS date
+        FROM attendance
+        WHERE subject_id=?
+        ORDER BY date, roll
+    """, (subject_id,))
+    records = c.fetchall()
+    conn.close()
+
+    if not students:
+        return [], []
+
+    all_dates = sorted({r[1] for r in records})
+    total_classes = len(all_dates)
+
+    # roll -> set of dates where student was present
+    present_map = {}
+    for roll, date in records:
+        present_map.setdefault(roll, set()).add(date)
+
+    summary = []
+    for roll, name in students:
+        dates_present = present_map.get(roll, set())
+        classes_present = len(dates_present)
+        pct = round(classes_present / total_classes * 100, 1) if total_classes else 0.0
+        date_status = {d: ("P" if d in dates_present else "A") for d in all_dates}
+        summary.append({
+            "roll": roll,
+            "name": name,
+            "classes_present": classes_present,
+            "total_classes": total_classes,
+            "pct": pct,
+            "dates": date_status,
+        })
+
+    return summary, all_dates
+
+
 # ══════════════════════════════════════════
 # STUDENTS — Excel seed
 # ══════════════════════════════════════════
 
 def seed_students_from_excel(class_id=None):
+    """
+    Seed students from student_list.xlsx.
+    Required columns: roll, name, class_id
+    (column names are stripped + lowercased automatically).
+
+    If class_id column is missing, the `class_id` argument is used as fallback.
+    Add rows for all sections (BCA-A=1, BCA-B=2, BCA(AI)=3) so every class
+    is seeded in a single pass.
+    """
+    xlsx_path = "student_list.xlsx"
+    if not os.path.exists(xlsx_path):
+        print("student_list.xlsx not found — skipping seed.")
+        return
+
     try:
-        df = pd.read_excel("student_list.xlsx")
+        df = pd.read_excel(xlsx_path)
         df.rename(columns=lambda x: x.strip().lower(), inplace=True)
         df["roll"] = df["roll"].astype(str).str.strip().str.upper()
         df["name"] = df["name"].astype(str).str.strip()
 
-        if "class_id" not in df.columns:
-            df["class_id"] = class_id
+        has_class_col = "class_id" in df.columns
 
         conn = get_db()
         c = conn.cursor()
-        count = 0
+        count = skipped = 0
+
         for _, row in df.iterrows():
-            effective_class_id = row["class_id"] if pd.notna(row.get("class_id")) else class_id
+            if has_class_col and pd.notna(row.get("class_id")):
+                eff_class_id = int(row["class_id"])
+            elif class_id is not None:
+                eff_class_id = class_id
+            else:
+                skipped += 1
+                continue
+
             c.execute("""
                 INSERT INTO students (roll, name, class_id) VALUES (?, ?, ?)
-                ON CONFLICT(roll) DO UPDATE SET name=excluded.name, class_id=excluded.class_id
-            """, (row["roll"], row["name"], effective_class_id))
+                ON CONFLICT(roll) DO UPDATE
+                SET name=excluded.name, class_id=excluded.class_id
+            """, (row["roll"], row["name"], eff_class_id))
             count += 1
+
         conn.commit()
         conn.close()
-        print(f"✅ {count} students seeded!")
+        msg = f"Seeded {count} students."
+        if skipped:
+            msg += f" Skipped {skipped} rows with no class_id."
+        print(msg)
     except Exception as e:
-        print(f"❌ Error seeding: {e}")
+        print(f"Error seeding students: {e}")
+
 
 def load_student_list():
     try:
         return pd.read_excel("student_list.xlsx")
     except Exception as e:
-        print("❌", e)
+        print(f"Could not load student_list.xlsx: {e}")
         return None
 
+
 # ══════════════════════════════════════════
-# REPORT  ← IMPROVED: date-wise + percentage
+# REPORT — date-wise + percentage (Excel download)
 # ══════════════════════════════════════════
 
 def generate_report_for_subject(subject_id, class_id):
@@ -464,9 +696,8 @@ def generate_report_for_subject(subject_id, class_id):
     c.execute("SELECT roll, name FROM students WHERE class_id = ? ORDER BY roll", (class_id,))
     students = c.fetchall()
 
-    # Get all attendance records with dates
     c.execute("""
-        SELECT roll, DATE(timestamp) as date, session_id
+        SELECT roll, DATE(timestamp) AS date, session_id
         FROM attendance
         WHERE subject_id = ?
         ORDER BY date, roll
@@ -479,15 +710,12 @@ def generate_report_for_subject(subject_id, class_id):
         return student_df, []
 
     if not records:
-        # Return with all A
-        date_cols = []
         student_df["Total Classes"] = 0
         student_df["Classes Present"] = 0
         student_df["Attendance %"] = 0.0
-        return student_df, date_cols
+        return student_df, []
 
     att_df = pd.DataFrame(records, columns=["Roll", "Date", "Session"])
-    # One entry per roll per date (in case of multiple sessions same day, count once per session)
     att_df = att_df.drop_duplicates(subset=["Roll", "Date"])
     att_df["Status"] = "P"
 
@@ -500,7 +728,6 @@ def generate_report_for_subject(subject_id, class_id):
     final_df = pd.merge(student_df, pivot, on="Roll", how="left")
     date_cols = [col for col in final_df.columns if col not in ["Roll", "Name"]]
 
-    # Fill missing (students who never attended) with "A"
     for col in date_cols:
         final_df[col] = final_df[col].fillna("A")
 

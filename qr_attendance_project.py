@@ -1,4 +1,7 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
+import sqlite3
+import os
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, g
+
 from database_logic import (
     init_db, seed_students_from_excel, load_student_list,
     roll_exists, has_already_submitted, mark_attendance, get_student_name,
@@ -10,17 +13,23 @@ from database_logic import (
     get_attendance_records,
     get_students_by_class, get_all_students, add_student, delete_student
 )
-from qr_generator import generate_qr, generate_device_token, is_device_allowed, register_device
-import sqlite3
-import os
+from qr_generator import generate_qr, issue_device_token, consume_device_token, cleanup_old_tokens
 
 app = Flask(__name__)
-app.secret_key = "rbu_qr_secret_2024"
+
+# ── Issue 5b: Secret key from environment — never hardcode ────────────────────
+app.secret_key = os.environ.get("SECRET_KEY", "fallback-only-for-dev")
+
+# ── Issue 5a: DB path from environment so Render Persistent Disk works ────────
+#   On Render: set DB_PATH=/data/attendance.db in Environment Variables
+#   and mount a Persistent Disk at /data.
+DB = os.environ.get("DB_PATH", "attendance.db")
 
 init_db()
 
+
 def seed_all_classes():
-    conn = sqlite3.connect("attendance.db")
+    conn = sqlite3.connect(DB)
     c = conn.cursor()
     c.execute("SELECT id FROM classes")
     class_ids = [row[0] for row in c.fetchall()]
@@ -30,7 +39,44 @@ def seed_all_classes():
 
 seed_all_classes()
 
-# ── helpers ──
+
+# ── Issue 4c: Per-request DB connection via Flask's g object ──────────────────
+
+def get_db():
+    """Return a per-request SQLite connection (created once, closed on teardown)."""
+    if "db" not in g:
+        g.db = sqlite3.connect(DB, check_same_thread=False)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(e=None):
+    db = g.pop("db", None)
+    if db:
+        db.close()
+
+
+# ── Issue 4a: DB indexes — run once at startup ────────────────────────────────
+
+def ensure_indexes():
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute("CREATE INDEX IF NOT EXISTS idx_att_subject        ON attendance(subject_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_att_session_roll   ON attendance(session_id, roll)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_att_session_device ON attendance(session_id, device_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_students_class     ON students(class_id)")
+    conn.commit()
+    conn.close()
+
+ensure_indexes()
+
+# ── Issue 1 fix: Remove device tokens older than 7 days on every startup ──────
+cleanup_old_tokens()
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
 def current_user():
     return session.get("user_data")
 
@@ -46,6 +92,7 @@ def require_role(*roles):
     if user["role"] not in roles:
         return "❌ Access denied.", 403
     return None
+
 
 # ─────────────────────────────────────────────
 # LOGIN / LOGOUT
@@ -67,6 +114,7 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
 
 # ─────────────────────────────────────────────
 # DASHBOARD
@@ -90,6 +138,7 @@ def dashboard():
         teachers=teachers,
         incharges=incharges
     )
+
 
 # ─────────────────────────────────────────────
 # USER MANAGEMENT (coordinator only)
@@ -115,6 +164,7 @@ def delete_user_route(uid):
     if err: return err
     delete_user(uid)
     return redirect(url_for("dashboard"))
+
 
 # ─────────────────────────────────────────────
 # CLASS MANAGEMENT (coordinator only)
@@ -144,6 +194,7 @@ def assign_incharge_route():
     incharge_id = int(request.form.get("incharge_id"))
     assign_incharge_to_class(class_id, incharge_id)
     return redirect(url_for("dashboard"))
+
 
 # ─────────────────────────────────────────────
 # SUBJECT MANAGEMENT (coordinator + incharge)
@@ -177,18 +228,18 @@ def assign_teacher_route():
     assign_teacher_to_subject(subject_id, teacher_id)
     return redirect(url_for("dashboard"))
 
+
 # ─────────────────────────────────────────────
-# STUDENT MANAGEMENT  ← NEW
+# STUDENT MANAGEMENT
 # ─────────────────────────────────────────────
 
 @app.route("/students")
 def show_students():
     redir = require_login()
     if redir: return redir
-    user = current_user()
+    user    = current_user()
     classes = get_all_classes()
 
-    # Filter by class_id if given
     class_id = request.args.get("class_id")
     if class_id:
         class_id = int(class_id)
@@ -227,6 +278,7 @@ def delete_student_route(roll):
     delete_student(roll)
     return redirect(url_for("show_students", class_id=class_id))
 
+
 # ─────────────────────────────────────────────
 # QR GENERATION
 # ─────────────────────────────────────────────
@@ -255,6 +307,7 @@ def refresh_qr(subject_id):
     session_id, qr_image = generate_qr(subject["id"], subject["name"])
     return jsonify({"session_id": session_id, "qr_image": qr_image})
 
+
 # ─────────────────────────────────────────────
 # SCAN (student side)
 # ─────────────────────────────────────────────
@@ -263,18 +316,25 @@ def refresh_qr(subject_id):
 def scan():
     subject_id = request.args.get("subject_id", "")
     session_id = request.args.get("session_id", "")
+
     subject = get_subject_by_id(int(subject_id)) if subject_id else None
     if not subject:
         return "❌ Invalid QR code."
-    device_token = generate_device_token()
+
+    device_token = issue_device_token(session_id)
+    if not device_token:
+        return "❌ Invalid or expired session."
+
     session["device_token"]    = device_token
     session["scan_subject_id"] = subject_id
     session["scan_session_id"] = session_id
+
     return render_template("scan.html",
         subject=subject,
         session_id=session_id,
         device_token=device_token
     )
+
 
 @app.route("/submit_attendance", methods=["POST"])
 def submit_attendance():
@@ -289,9 +349,15 @@ def submit_attendance():
             message="❌ Invalid session. Please scan the QR code again.",
             session_id=session_id)
 
-    if not is_device_allowed(session_id, device_token):
+    allowed, reason = consume_device_token(session_id, device_token)
+    if not allowed:
+        error_messages = {
+            "invalid_session":    "❌ Session expired. Please scan the QR code again.",
+            "unrecognized_token": "❌ Invalid token. Please scan the QR code again.",
+            "already_used":       "❌ This device has already marked attendance.",
+        }
         return render_template("confirm.html",
-            message="❌ This device already marked attendance.",
+            message=error_messages.get(reason, "❌ Already submitted."),
             session_id=session_id)
 
     subject = get_subject_by_id(int(subject_id)) if subject_id else None
@@ -308,8 +374,8 @@ def submit_attendance():
     if already:
         msgs = {
             "roll":   "❌ Attendance already marked for this roll number.",
-            "device": "❌ This device already marked attendance.",
-            "ip":     "❌ Attendance already marked from this network."
+            "device": "❌ This device has already marked attendance.",
+            "ip":     "❌ Attendance already marked from this network.",
         }
         return render_template("confirm.html",
             message=msgs.get(reason, "❌ Already submitted."), session_id=session_id)
@@ -319,18 +385,20 @@ def submit_attendance():
         subject["id"], subject["name"], subject["class_id"],
         session_id, roll, name, device_token, ip_address
     )
+
+    session.pop("device_token", None)
+
     if not success:
         return render_template("confirm.html",
             message="❌ Already submitted (duplicate blocked).", session_id=session_id)
 
-    register_device(session_id, device_token)
-    session.pop("device_token", None)
     return render_template("confirm.html",
         message=f"✅ Attendance marked for {name} ({roll})",
         session_id=session_id)
 
+
 # ─────────────────────────────────────────────
-# VIEW ATTENDANCE  ← FIXED
+# VIEW ATTENDANCE  (Issue 3 fix)
 # ─────────────────────────────────────────────
 
 @app.route("/view_attendance/<int:subject_id>")
@@ -342,26 +410,21 @@ def view_attendance(subject_id):
     if not subject:
         return "❌ Subject not found."
 
-    # Use the dedicated function that properly joins students table
-    records = get_attendance_records(subject_id)
+    # Use the same report function that drives the Excel export so that
+    # date-wise columns and per-student percentage are shown in the web view.
+    final_df, date_cols = generate_report_for_subject(subject_id, subject["class_id"])
 
-    # Total students in class
-    conn = sqlite3.connect("attendance.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM students WHERE class_id = ?", (subject["class_id"],))
-    total_students = cursor.fetchone()[0]
-    conn.close()
-
-    # Unique students who have marked attendance at least once
-    total_present = len(set(r[0] for r in records)) if records else 0
+    # Convert DataFrame → list-of-dicts so Jinja can iterate easily.
+    students_data = final_df.to_dict(orient="records") if not final_df.empty else []
 
     return render_template("view_attendance.html",
         subject=subject,
-        records=records,
-        total_students=total_students,
-        total_present=total_present,
-        message="" if records else "⚠️ No attendance records found for this subject yet."
+        students_data=students_data,
+        date_cols=date_cols,
+        total_students=len(students_data),
+        message="" if students_data else "⚠️ No attendance records found for this subject yet."
     )
+
 
 # ─────────────────────────────────────────────
 # REPORTS
@@ -413,7 +476,7 @@ def report_class(class_id):
     from datetime import datetime as dt
     import pandas as pd
 
-    conn = sqlite3.connect("attendance.db")
+    conn = sqlite3.connect(DB)
     c = conn.cursor()
     c.execute("SELECT id, name FROM subjects WHERE class_id = ?", (class_id,))
     subs = c.fetchall()
@@ -446,7 +509,7 @@ def report_all():
     from datetime import datetime as dt
     import pandas as pd
 
-    conn = sqlite3.connect("attendance.db")
+    conn = sqlite3.connect(DB)
     c = conn.cursor()
     c.execute("SELECT id, name FROM classes ORDER BY name")
     classes = c.fetchall()
@@ -458,7 +521,7 @@ def report_all():
 
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
         for cls_id, cls_name in classes:
-            conn = sqlite3.connect("attendance.db")
+            conn = sqlite3.connect(DB)
             c = conn.cursor()
             c.execute("SELECT id, name FROM subjects WHERE class_id = ?", (cls_id,))
             subs = c.fetchall()
@@ -471,39 +534,37 @@ def report_all():
     _apply_colors(filepath)
     return redirect(url_for("download_export", filename=filename))
 
+
 def _apply_colors(filepath, date_cols=None):
     """Apply color formatting to the Excel report."""
     from openpyxl import load_workbook
-    from openpyxl.styles import PatternFill, Font, Alignment, PatternFill
+    from openpyxl.styles import PatternFill, Font, Alignment
     from openpyxl.utils import get_column_letter
 
     wb = load_workbook(filepath)
-    green  = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    red    = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
-    yellow = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    green       = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    red         = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
+    yellow      = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
     header_fill = PatternFill(start_color="1A3A6B", end_color="1A3A6B", fill_type="solid")
 
     for ws in wb.worksheets:
-        # Style header row
         for cell in ws[1]:
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = header_fill
+            cell.font      = Font(bold=True, color="FFFFFF")
+            cell.fill      = header_fill
             cell.alignment = Alignment(horizontal="center", wrap_text=True)
 
-        # Find column indices for date columns and summary columns
         header_vals = [cell.value for cell in ws[1]]
 
         for row in ws.iter_rows(min_row=2):
             for cell in row:
                 col_name = header_vals[cell.column - 1] if cell.column <= len(header_vals) else ""
                 if cell.value == "P":
-                    cell.fill = green
+                    cell.fill      = green
                     cell.alignment = Alignment(horizontal="center")
                 elif cell.value == "A":
-                    cell.fill = red
+                    cell.fill      = red
                     cell.alignment = Alignment(horizontal="center")
                 elif col_name == "Attendance %":
-                    # Color code attendance %
                     try:
                         pct = float(cell.value)
                         if pct >= 75:
@@ -516,19 +577,19 @@ def _apply_colors(filepath, date_cols=None):
                         pass
                     cell.alignment = Alignment(horizontal="center")
 
-        # Auto-size columns
         for col in ws.columns:
-            max_len = 0
+            max_len    = 0
             col_letter = get_column_letter(col[0].column)
             for cell in col:
                 try:
                     if cell.value:
                         max_len = max(max_len, len(str(cell.value)))
-                except:
+                except Exception:
                     pass
             ws.column_dimensions[col_letter].width = min(max_len + 4, 20)
 
     wb.save(filepath)
+
 
 # ─────────────────────────────────────────────
 # MISC
@@ -544,7 +605,7 @@ def download_export(filename):
 def refresh_students():
     err = require_role("coordinator", "incharge")
     if err: return err
-    user = current_user()
+    user     = current_user()
     class_id = request.args.get("class_id") or user.get("class_id")
     if class_id:
         seed_students_from_excel(class_id=int(class_id))
