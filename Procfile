@@ -1,0 +1,1 @@
+web: gunicorn qr_attendance_project:app --workers 2 --timeout 120
