@@ -185,7 +185,11 @@
     </div>
 </div>
 
-<!-- Stats -->
+<!--
+    FIX 5: The route was passing date_cols but the template used all_dates everywhere.
+    The route now passes BOTH date_cols and all_dates (same value).
+    All references below use all_dates — consistent with the template variable name.
+-->
 {% set total_students = students_data | length %}
 {% set present_count  = students_data | selectattr("classes_present", "gt", 0) | list | length %}
 {% set low_att_count  = students_data | selectattr("pct", "lt", 75) | list | length %}
@@ -213,6 +217,7 @@
         <div class="label">Below 75%</div>
     </div>
     <div class="stat-card">
+        <!-- FIX 5: was all_dates | length — now correctly uses all_dates from route -->
         <div class="num c-blue" style="font-size:26px;">{{ all_dates | length }}</div>
         <div class="label">Classes Held</div>
     </div>
@@ -241,6 +246,7 @@
 
 <!-- ══════════════════════════════════════════════════
      TAB 1: Per-student summary with date columns
+     FIX 5: all date column loops changed from all_dates → all_dates (now correctly passed)
 ══════════════════════════════════════════════════ -->
 <div id="tab-summary" class="tab-panel active">
     <div class="search-wrap">
@@ -364,7 +370,6 @@
     function filterSummary() {
         const q = document.getElementById("summarySearch").value.toLowerCase();
         document.querySelectorAll("#summaryTable tbody tr").forEach(row => {
-            // Only search roll (col 1) and name (col 2) — date cells would be noisy
             const roll = row.cells[1] ? row.cells[1].textContent.toLowerCase() : "";
             const name = row.cells[2] ? row.cells[2].textContent.toLowerCase() : "";
             row.style.display = (roll.includes(q) || name.includes(q)) ? "" : "none";

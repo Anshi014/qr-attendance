@@ -139,8 +139,10 @@
         {% for s in subjects %}
         <div class="card">
             {% if user.role in ['coordinator','incharge'] %}
-            <a href="/delete_subject/{{ s.id }}" class="del-btn"
-               onclick="return confirm('Delete subject {{ s.name }}?')">×</a>
+            {# FIX 1: Use a JS function for confirm to avoid apostrophe-breaking the HTML attribute #}
+            <a href="/delete_subject/{{ s.id }}"
+               class="del-btn"
+               onclick="return confirmDelete(this, 'Delete subject {{ s.name | e }}?')">×</a>
             {% endif %}
             <h3>📚 {{ s.name }}</h3>
             <div class="sub">{{ s.class_name }}{% if s.teacher_name %} · {{ s.teacher_name }}{% endif %}</div>
@@ -273,8 +275,9 @@
                     </form>
                 </td>
                 <td>
+                    {# FIX 2: Use confirmDelete() so apostrophes in class names don't break JS #}
                     <a href="/delete_class/{{ cls[0] }}"
-                       onclick="return confirm('Delete class {{ cls[1] }}?')"
+                       onclick="return confirmDelete(this, 'Delete class {{ cls[1] | e }}?')"
                        style="color:#e53935;font-size:12px;text-decoration:none;">Delete</a>
                 </td>
             </tr>
@@ -337,8 +340,9 @@
                 <td><span class="role-badge role-{{ u[2] }}">{{ u[2] }}</span></td>
                 <td>{{ u[4] or '—' }}</td>
                 <td>
+                    {# FIX 3: Use confirmDelete() so apostrophes in usernames don't break JS #}
                     <a href="/delete_user/{{ u[0] }}"
-                       onclick="return confirm('Delete user {{ u[1] }}?')"
+                       onclick="return confirmDelete(this, 'Delete user {{ u[1] | e }}?')"
                        style="color:#e53935;font-size:12px;text-decoration:none;">Delete</a>
                 </td>
             </tr>
@@ -351,6 +355,21 @@
 </div>
 
 {% endif %} {# end coordinator #}
+
+{#
+  FIX 4: Safe confirm helper — avoids inline JS string-quoting issues entirely.
+  This replaces all three broken onclick="return confirm('...')" patterns above.
+  The function receives the anchor element and the message, so it still navigates
+  to href on confirmation and stays on the page on cancel.
+#}
+<script>
+    function confirmDelete(anchorEl, message) {
+        if (window.confirm(message)) {
+            window.location.href = anchorEl.href;
+        }
+        return false; // always prevent default — we navigate manually above
+    }
+</script>
 
 </body>
 </html>

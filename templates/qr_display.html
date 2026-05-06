@@ -42,20 +42,57 @@
             color: #888;
             margin-bottom: 20px;
         }
+        .qr-wrap {
+            position: relative;
+            width: 240px;
+            height: 240px;
+            margin: 0 auto 16px;
+        }
         #qr-img {
             width: 240px;
             height: 240px;
             border: 3px solid #e0e0e0;
             border-radius: 12px;
             padding: 8px;
-            margin-bottom: 16px;
-            transition: opacity 0.3s;
+            display: block;
         }
+        #qr-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(255,255,255,0.82);
+            border-radius: 12px;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            color: #888;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #qr-overlay.visible { display: flex; }
+        .spinner-ring {
+            width: 28px; height: 28px;
+            border: 3px solid #e0e0e0;
+            border-top-color: #1976d2;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
         #session-label {
             font-size: 12px;
             color: #888;
-            margin-bottom: 24px;
+            margin-bottom: 8px;
         }
+
+        #countdown-wrap {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 20px;
+            min-height: 18px;
+        }
+        #countdown-wrap.urgent { color: #c62828; font-weight: bold; }
+
         .btn {
             display: inline-block;
             padding: 12px 28px;
@@ -70,46 +107,70 @@
         }
         .btn-primary   { background: #1976d2; color: white; }
         .btn-primary:hover { background: #1565c0; }
+        .btn-primary:disabled { background: #90bce8; cursor: not-allowed; }
         .btn-secondary { background: #f5f5f5; color: #333; border: 1px solid #ccc; }
         .btn-secondary:hover { background: #e0e0e0; }
+
         #status-msg {
             font-size: 13px;
-            color: #2e7d32;
             min-height: 20px;
             margin-top: 8px;
+            font-weight: bold;
         }
-        .spinner { display: none; font-size: 13px; color: #888; }
+        #status-msg.ok  { color: #2e7d32; }
+        #status-msg.err { color: #c62828; }
+
         .divider { border: none; border-top: 1px solid #eee; margin: 20px 0; }
         .report-links { font-size: 14px; color: #555; }
         .report-links a { color: #1976d2; text-decoration: none; margin: 0 6px; }
         .report-links a:hover { text-decoration: underline; }
+
+        .scan-badge {
+            display: inline-block;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 3px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 12px;
+        }
     </style>
 </head>
 <body>
 <div class="card">
     <h2>📋 Attendance QR</h2>
 
-    <!-- FIXED: subject is now a dict -->
     <div class="subject-badge">{{ subject.name }}</div>
     <span class="class-badge">{{ subject.class_name }}</span>
 
-    <img id="qr-img" src="/static/qr_codes/{{ qr_image }}" alt="QR Code">
+    <div class="scan-badge" id="scan-count">⏳ Loading scan count…</div>
+
+    <div class="qr-wrap">
+        <img id="qr-img" src="/static/qr_codes/{{ qr_image }}" alt="QR Code">
+        <div id="qr-overlay">
+            <div class="spinner-ring"></div>
+            Generating…
+        </div>
+    </div>
 
     <div id="session-label">
         Session ID: <strong id="session-id-text">{{ session_id }}</strong>
     </div>
 
-    <!-- FIXED: refresh URL uses subject.id -->
-    <button class="btn btn-primary" onclick="refreshQR()">🔄 Generate New QR</button>
+    <!-- FIX 1: countdown-wrap contains only a static text node + inline span.
+         After refreshQR() we re-render it via innerHTML and re-capture the
+         timerEl reference so the clock still ticks correctly. -->
+    <div id="countdown-wrap">QR active — <span id="timer-text">0:00</span> elapsed</div>
+
+    <button class="btn btn-primary" id="refresh-btn" onclick="refreshQR()">🔄 Generate New QR</button>
     <a class="btn btn-secondary" href="/dashboard">← Dashboard</a>
 
     <div id="status-msg"></div>
-    <div class="spinner" id="spinner">Generating new QR...</div>
 
     <hr class="divider">
     <div class="report-links">
         Download report:
-        <!-- FIXED: report URLs use subject.id -->
         <a href="/report/{{ subject.id }}">📥 {{ subject.name }} Report</a>
         &nbsp;|&nbsp;
         <a href="/report/class/{{ subject.class_id }}">📂 Class Report</a>
@@ -117,38 +178,105 @@
 </div>
 
 <script>
-    // FIXED: subject_id integer use ho raha hai
-    const subjectId = {{ subject.id }};
+    var subjectId = {{ subject.id }};
 
+    // ── Elapsed timer ────────────────────────────────────────────────────────
+    var elapsedSeconds = 0;
+
+    // FIX 1: getTimerEl() always fetches the live DOM element, so after
+    // refreshQR() rebuilds #countdown-wrap via innerHTML the clock target
+    // is the new <span>, not the now-detached original.
+    function getTimerEl() {
+        return document.getElementById("timer-text");
+    }
+
+    setInterval(function() {
+        elapsedSeconds++;
+        var m = Math.floor(elapsedSeconds / 60);
+        var s = elapsedSeconds % 60;
+        var el = getTimerEl();
+        if (el) el.textContent = m + ":" + (s < 10 ? "0" : "") + s;
+
+        var wrap = document.getElementById("countdown-wrap");
+        if (elapsedSeconds >= 600 && wrap && !wrap.classList.contains("urgent")) {
+            wrap.classList.add("urgent");
+            wrap.textContent = "⚠️ QR is 10+ minutes old — consider refreshing";
+        }
+    }, 1000);
+
+    // ── Scan count polling ───────────────────────────────────────────────────
+    // FIX 2: Always read session-id-text at call time (not captured once at load)
+    //        so polling uses the updated session_id after a QR refresh.
+    function updateScanCount() {
+        var sid = document.getElementById("session-id-text").textContent.trim();
+        fetch("/scan_count/" + subjectId + "/" + encodeURIComponent(sid))
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(data) {
+                if (data && typeof data.count !== "undefined") {
+                    var badge = document.getElementById("scan-count");
+                    badge.textContent = "✅ " + data.count +
+                        " student" + (data.count !== 1 ? "s" : "") + " scanned this session";
+                }
+            })
+            .catch(function() {}); // non-critical
+    }
+    updateScanCount();
+    setInterval(updateScanCount, 10000);
+
+    // ── Refresh QR ───────────────────────────────────────────────────────────
     function refreshQR() {
-        const img        = document.getElementById("qr-img");
-        const spinner    = document.getElementById("spinner");
-        const statusMsg  = document.getElementById("status-msg");
-        const sessionText = document.getElementById("session-id-text");
+        var img         = document.getElementById("qr-img");
+        var overlay     = document.getElementById("qr-overlay");
+        var statusMsg   = document.getElementById("status-msg");
+        var sessionText = document.getElementById("session-id-text");
+        var refreshBtn  = document.getElementById("refresh-btn");
+        var countdownWrap = document.getElementById("countdown-wrap");
 
-        img.style.opacity = "0.3";
-        spinner.style.display = "block";
+        refreshBtn.disabled = true;
+        overlay.classList.add("visible");
+        statusMsg.className = "";
         statusMsg.textContent = "";
 
-        // FIXED: /refresh_qr/<subject_id>
-        fetch(`/refresh_qr/${subjectId}`)
-            .then(response => {
-                if (!response.ok) throw new Error("Server error");
+        fetch("/refresh_qr/" + subjectId, { credentials: "same-origin" })
+            .then(function(response) {
+                if (!response.ok) throw new Error("Server error " + response.status);
                 return response.json();
             })
-            .then(data => {
-                img.src = `/static/qr_codes/${data.qr_image}?t=${Date.now()}`;
-                img.style.opacity = "1";
+            .then(function(data) {
+                if (!data.qr_image || !data.session_id) {
+                    throw new Error("Invalid response from server");
+                }
+
+                // Cache-bust so browser loads the new image
+                img.src = "/static/qr_codes/" + data.qr_image + "?t=" + Date.now();
                 sessionText.textContent = data.session_id;
-                spinner.style.display = "none";
+
+                overlay.classList.remove("visible");
+                refreshBtn.disabled = false;
+
+                // FIX 1: Reset timer — also rebuild the span so getTimerEl() finds
+                // a live element (innerHTML replacement is safe here because we only
+                // touch #countdown-wrap, not the parent card).
+                elapsedSeconds = 0;
+                countdownWrap.classList.remove("urgent");
+                countdownWrap.innerHTML = "QR active — <span id=\"timer-text\">0:00</span> elapsed";
+
+                // Reset scan badge for new session
+                document.getElementById("scan-count").textContent = "✅ 0 students scanned this session";
+
+                // Immediately poll for the new session's count
+                updateScanCount();
+
+                statusMsg.className = "ok";
                 statusMsg.textContent = "✅ New QR generated!";
-                setTimeout(() => { statusMsg.textContent = ""; }, 3000);
+                setTimeout(function() { statusMsg.textContent = ""; }, 3000);
             })
-            .catch(() => {
-                img.style.opacity = "1";
-                spinner.style.display = "none";
-                statusMsg.style.color = "red";
-                statusMsg.textContent = "❌ Failed to refresh. Try again.";
+            .catch(function(err) {
+                overlay.classList.remove("visible");
+                refreshBtn.disabled = false;
+                statusMsg.className = "err";
+                statusMsg.textContent = "❌ Failed to refresh — please try again.";
+                console.error("QR refresh error:", err);
             });
     }
 </script>

@@ -1,7 +1,7 @@
 import pytest
 import sqlite3
 import os
-from app import app
+from qr_attendance_project import app
 from database_logic import init_db, mark_attendance, has_already_submitted, roll_exists
 from users import users
 

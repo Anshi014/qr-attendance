@@ -8,178 +8,189 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: Arial, sans-serif;
-            background: #f0f2f5;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             min-height: 100vh;
-            padding: 20px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #d4e8c2 0%, #b8d4e8 50%, #c8e0d4 100%);
         }
         .card {
             background: white;
             border-radius: 16px;
-            padding: 32px;
-            max-width: 380px;
+            padding: 28px 24px;
+            max-width: 420px;
             width: 100%;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
         }
-        h2 { color: #333; margin-bottom: 8px; }
+
+        /* ── Subject info header ── */
+        .subject-header {
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e8f0fe;
+        }
         .subject-badge {
             display: inline-block;
-            background: #e8f5e9;
-            color: #2e7d32;
-            padding: 4px 16px;
-            border-radius: 20px;
-            font-size: 14px;
-            font-weight: bold;
-            margin-bottom: 4px;
-        }
-        .class-badge {
-            display: block;
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 20px;
-        }
-        .form-group { margin-bottom: 16px; text-align: left; }
-        label { display: block; font-size: 14px; color: #555; margin-bottom: 6px; }
-        input[type="text"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 16px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            transition: border-color 0.2s;
-        }
-        input[type="text"]:focus { outline: none; border-color: #1976d2; }
-        #name-preview {
+            background: #e8f0fe;
+            color: #1a3a6b;
             font-size: 13px;
-            color: #2e7d32;
-            min-height: 20px;
-            margin-top: 4px;
             font-weight: bold;
+            padding: 4px 14px;
+            border-radius: 20px;
+            margin-bottom: 6px;
         }
-        .btn-submit {
-            width: 100%;
-            padding: 14px;
-            background: #2e7d32;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            margin-top: 8px;
-            transition: background 0.2s;
+        .subject-class {
+            font-size: 13px;
+            color: #666;
         }
-        .btn-submit:hover { background: #1b5e20; }
-        .btn-submit:disabled { background: #aaa; cursor: not-allowed; }
-        .note { font-size: 12px; color: #888; margin-top: 16px; }
 
-        .already-card { text-align: center; }
-        .already-card .icon { font-size: 56px; margin-bottom: 16px; }
-        .already-card .msg {
-            font-size: 18px; font-weight: bold;
-            color: #e65100; line-height: 1.5;
+        h2 { font-size: 18px; color: #1a3a6b; text-align: center; margin-bottom: 20px; }
+        .form-group { margin-bottom: 16px; }
+        label { display: block; font-size: 13px; color: #555; font-weight: bold; margin-bottom: 6px; }
+        input[type="text"] {
+            width: 100%; padding: 12px 14px;
+            border: 2px solid #1976d2; border-radius: 8px;
+            font-size: 16px; letter-spacing: 1px; outline: none; background: white;
         }
-        .already-card .note { font-size: 13px; color: #888; margin-top: 16px; }
+        input[type="text"]:focus { border-color: #0d47a1; box-shadow: 0 0 0 3px rgba(25,118,210,0.15); }
+        #name-preview { font-size: 13px; min-height: 18px; margin-top: 5px; font-weight: bold; }
+
+        .btn-submit {
+            width: 100%; padding: 14px; background: #2e7d32;
+            color: white; border: none; border-radius: 8px;
+            font-size: 15px; font-weight: bold; cursor: pointer;
+            margin-top: 6px; transition: background 0.2s;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        .btn-submit:hover:not(:disabled) { background: #1b5e20; }
+        .btn-submit:disabled { background: #9e9e9e; cursor: not-allowed; }
+
+        /* spinner inside button */
+        .spinner {
+            display: none;
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .note { font-size: 12px; color: #888; text-align: center; margin-top: 14px; }
+
+        /* ── Already submitted / expired states ── */
+        .state-card { text-align: center; }
+        .state-icon { font-size: 52px; margin-bottom: 12px; }
+        .state-msg { font-size: 16px; font-weight: bold; line-height: 1.5; }
+        .state-msg.warning { color: #e65100; }
+        .state-msg.expired { color: #c62828; }
+        .state-note { font-size: 12px; color: #888; margin-top: 12px; }
     </style>
 </head>
 <body>
 <div class="card" id="main-card">
-    <h2>✅ Mark Attendance</h2>
-    <div class="subject-badge">{{ subject.name }}</div>
-    <span class="class-badge">{{ subject.class_name }}</span>
 
-    <form method="POST" action="/submit_attendance" onsubmit="return validateForm()">
-        <!-- FIXED: subject_id integer pass ho raha hai -->
+    <!-- FIX 1: Show subject name and class so student knows what they're marking -->
+    <div class="subject-header">
+        <div class="subject-badge">{{ subject.name }}</div>
+        {% if subject.class_name %}
+        <div class="subject-class">{{ subject.class_name }}</div>
+        {% endif %}
+    </div>
+
+    <h2>📝 Mark Your Attendance</h2>
+
+    <form method="POST" action="/submit_attendance" onsubmit="return handleSubmit(this)">
         <input type="hidden" name="subject_id"   value="{{ subject.id }}">
         <input type="hidden" name="session_id"   value="{{ session_id }}">
         <input type="hidden" name="device_token" value="{{ device_token }}">
 
         <div class="form-group">
-            <label for="roll">Your Roll Number</label>
-            <input
-                type="text"
-                id="roll"
-                name="roll"
+            <label for="roll">Roll Number:</label>
+            <input type="text" id="roll" name="roll"
                 placeholder="e.g. 23BCA001"
-                autocomplete="off"
-                oninput="lookupName(this.value)"
-                required
-            >
+                autocomplete="off" autocapitalize="characters"
+                oninput="lookupName(this.value)" required>
             <div id="name-preview"></div>
         </div>
 
-        <button type="submit" class="btn-submit" id="submit-btn" disabled>
-            Submit Attendance
+        <!-- FIX 2: Button shows spinner and disables after first tap -->
+        <button type="submit" class="btn-submit" id="submit-btn">
+            <span id="btn-text">✅ Submit Attendance</span>
+            <div class="spinner" id="btn-spinner"></div>
         </button>
     </form>
 
-    <p class="note">Make sure you enter your correct roll number.<br>Attendance cannot be changed after submission.</p>
+    <p class="note">This device can mark attendance only once per subject.</p>
 </div>
 
 <script>
-    let nameFound = false;
+    var nameFound = false;
 
-    // ── localStorage check: same session mein dobara form na dikhe ──
     window.addEventListener("load", function () {
-        const sid = "{{ session_id }}";
-        if (localStorage.getItem("attended_" + sid)) {
-            document.getElementById("main-card").innerHTML = `
-                <div class="already-card">
-                    <div class="icon">⚠️</div>
-                    <div class="msg">You have already marked attendance for this session.</div>
-                    <p class="note">If you think this is a mistake, contact your teacher.</p>
-                </div>
-            `;
+        var sid = "{{ session_id | e }}";
+        if (!sid) return;
+
+        // FIX 3: Check localStorage for already-submitted (still useful as first-line guard)
+        var blocked = false;
+        try { blocked = localStorage.getItem("submitted_session_" + sid) === "1"; } catch(e) {}
+        if (blocked) {
+            showState(
+                "⚠️",
+                "You have already marked attendance for this session.",
+                "warning",
+                "Contact your teacher if this is a mistake."
+            );
         }
     });
 
+    function showState(icon, msg, type, note) {
+        document.getElementById("main-card").innerHTML =
+            '<div class="state-card">' +
+            '<div class="state-icon">' + icon + '</div>' +
+            '<div class="state-msg ' + type + '">' + msg + '</div>' +
+            (note ? '<p class="state-note">' + note + '</p>' : '') +
+            '</div>';
+    }
+
     function lookupName(roll) {
-        const preview = document.getElementById("name-preview");
-        const btn     = document.getElementById("submit-btn");
+        var preview = document.getElementById("name-preview");
         roll = roll.trim().toUpperCase();
-
-        if (roll.length < 5) {
-            preview.textContent = "";
-            btn.disabled = true;
-            nameFound = false;
-            return;
-        }
-
-        const formData = new FormData();
-        formData.append("roll", roll);
-
-        fetch("/get_name", { method: "POST", body: formData })
-            .then(r => r.text())
-            .then(name => {
-                if (name.startsWith("❌")) {
+        if (roll.length < 3) { preview.textContent = ""; nameFound = false; return; }
+        var fd = new FormData();
+        fd.append("roll", roll);
+        fetch("/get_name", { method: "POST", body: fd })
+            .then(function(r) { return r.text(); })
+            .then(function(name) {
+                if (!name || name.indexOf("❌") !== -1) {
                     preview.style.color = "#c62828";
-                    preview.textContent = "Roll number not found";
-                    btn.disabled = true;
+                    preview.textContent = "Roll number not found in this class";
                     nameFound = false;
                 } else {
                     preview.style.color = "#2e7d32";
                     preview.textContent = "👤 " + name;
-                    btn.disabled = false;
                     nameFound = true;
                 }
             })
-            .catch(() => {
-                preview.textContent = "";
-                btn.disabled = false;
-            });
+            .catch(function() { preview.textContent = ""; nameFound = true; });
     }
 
-    function validateForm() {
-        if (!nameFound) {
-            alert("Please enter a valid roll number.");
-            return false;
-        }
-        return true;
+    // FIX 4: Prevent double-submit, show spinner on submit
+    function handleSubmit(form) {
+        var roll = document.getElementById("roll").value.trim();
+        if (!roll) { alert("Please enter your roll number."); return false; }
+
+        var btn = document.getElementById("submit-btn");
+        var btnText = document.getElementById("btn-text");
+        var spinner = document.getElementById("btn-spinner");
+
+        btn.disabled = true;
+        btnText.textContent = "Submitting…";
+        spinner.style.display = "block";
+
+        return true; // allow form to POST normally
     }
 </script>
 </body>

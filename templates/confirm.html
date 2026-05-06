@@ -3,60 +3,156 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Attendance Status</title>
+    <title>Attendance Update</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: Arial, sans-serif;
-            background: #f0f2f5;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             min-height: 100vh;
-            padding: 20px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #d4e8c2 0%, #b8d4e8 50%, #c8e0d4 100%);
         }
         .card {
             background: white;
             border-radius: 16px;
-            padding: 40px 32px;
-            max-width: 360px;
+            padding: 28px 24px;
+            max-width: 420px;
             width: 100%;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
             text-align: center;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
         }
-        .icon { font-size: 56px; margin-bottom: 16px; }
-        .message {
-            font-size: 18px;
-            font-weight: bold;
-            color: #333;
-            line-height: 1.5;
+
+        /* ── Success state ── */
+        .check-circle {
+            width: 72px; height: 72px; border-radius: 50%;
+            background: #e8f5e9;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 36px;
+            margin: 0 auto 16px;
         }
-        .message.error { color: #c62828; }
-        .message.success { color: #2e7d32; }
-        .note { font-size: 13px; color: #888; margin-top: 16px; }
+        .success-title {
+            font-size: 20px; font-weight: bold;
+            color: #2e7d32; margin-bottom: 6px;
+        }
+        .success-sub {
+            font-size: 14px; color: #555; margin-bottom: 20px;
+        }
+
+        /* ── Detail table ── */
+        .detail-box {
+            background: #f5f9f5;
+            border: 1px solid #c8e6c9;
+            border-radius: 10px;
+            padding: 14px 16px;
+            text-align: left;
+            margin-bottom: 16px;
+        }
+        .detail-row {
+            display: flex; justify-content: space-between;
+            font-size: 13px; padding: 5px 0;
+            border-bottom: 1px solid #e0f0e0;
+        }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-label { color: #777; }
+        .detail-value { font-weight: bold; color: #1a3a6b; }
+
+        .note { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+        /* ── Error state ── */
+        .error-circle {
+            width: 72px; height: 72px; border-radius: 50%;
+            background: #fce8e6;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 36px;
+            margin: 0 auto 16px;
+        }
+        .error-title {
+            font-size: 18px; font-weight: bold;
+            color: #c62828; margin-bottom: 8px;
+        }
+        .error-msg {
+            font-size: 14px; color: #555; margin-bottom: 16px; line-height: 1.5;
+        }
+        .btn-back {
+            display: inline-block; margin-top: 6px;
+            padding: 10px 24px;
+            background: #1976d2; color: white;
+            border-radius: 8px; font-size: 14px;
+            text-decoration: none; font-weight: bold;
+        }
+        .btn-back:hover { background: #0d47a1; }
     </style>
 </head>
 <body>
 <div class="card">
-    {% if '✅' in message %}
-        <div class="icon">✅</div>
-        <div class="message success">{{ message }}</div>
-        <p class="note">You can close this page now.</p>
+
+    {% if success %}
+    <!-- FIX: Full success screen with all details -->
+    <div class="check-circle">✅</div>
+    <div class="success-title">Attendance Marked!</div>
+    <div class="success-sub">You have been marked <strong>present</strong> for today's session.</div>
+
+    <div class="detail-box">
+        {% if subject_name %}
+        <div class="detail-row">
+            <span class="detail-label">Subject</span>
+            <span class="detail-value">{{ subject_name }}</span>
+        </div>
+        {% endif %}
+        {% if class_name %}
+        <div class="detail-row">
+            <span class="detail-label">Class</span>
+            <span class="detail-value">{{ class_name }}</span>
+        </div>
+        {% endif %}
+        {% if student_name %}
+        <div class="detail-row">
+            <span class="detail-label">Name</span>
+            <span class="detail-value">{{ student_name }}</span>
+        </div>
+        {% endif %}
+        {% if roll %}
+        <div class="detail-row">
+            <span class="detail-label">Roll No.</span>
+            <span class="detail-value">{{ roll }}</span>
+        </div>
+        {% endif %}
+        <div class="detail-row">
+            <span class="detail-label">Time</span>
+            <span class="detail-value" id="marked-time">—</span>
+        </div>
+    </div>
+
+    <p class="note">You can close this page now.</p>
+
     {% else %}
-        <div class="icon">❌</div>
-        <div class="message error">{{ message }}</div>
-        <p class="note">If you think this is a mistake, contact your teacher.</p>
+    <!-- Error screen -->
+    <div class="error-circle">❌</div>
+    <div class="error-title">Could Not Mark Attendance</div>
+    <div class="error-msg">{{ message }}</div>
+    <a class="btn-back" href="javascript:history.back()">↩ Try Again</a>
     {% endif %}
+
 </div>
 
-{% if '✅' in message %}
+{% if success and session_id %}
 <script>
-    // Success hone par localStorage mein set karo
-    // Taaki same device dobara same session mein attend na kar sake
-    const sid = "{{ session_id }}";
-    if (sid) {
-        localStorage.setItem("attended_" + sid, "1");
-    }
+    (function() {
+        // Save to localStorage so scan.html can block re-submission on same device
+        var sid = {{ session_id | tojson }};
+        if (sid) {
+            try { localStorage.setItem("submitted_session_" + sid, "1"); } catch(e) {}
+        }
+        // Show current time
+        var t = document.getElementById("marked-time");
+        if (t) {
+            var now = new Date();
+            t.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+    })();
 </script>
 {% endif %}
 

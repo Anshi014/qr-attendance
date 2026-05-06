@@ -10,24 +10,22 @@ from database_logic import (
     add_subject, delete_subject, assign_teacher_to_subject,
     get_subjects_for_user, get_subject_by_id, get_all_subjects,
     authenticate_user, generate_report_for_subject,
-    get_attendance_records,
+    get_attendance_records, get_attendance_summary,
     get_students_by_class, get_all_students, add_student, delete_student,
-    is_device_blocked_for_subject, register_device_for_subject
 )
 from qr_generator import generate_qr, issue_device_token, consume_device_token, cleanup_old_tokens
 
 app = Flask(__name__)
 
-# Secret key from environment — never hardcode
 app.secret_key = os.environ.get("SECRET_KEY", "fallback-only-for-dev")
-
-# DB path from environment (set DB_PATH=/data/attendance.db on Render with Persistent Disk)
 DB = os.environ.get("DB_PATH", "attendance.db")
 
 init_db()
 
 
 def seed_all_classes():
+    if not os.path.exists("student_list.xlsx"):
+        return
     conn = sqlite3.connect(DB)
     c = conn.cursor()
     c.execute("SELECT id FROM classes")
@@ -54,8 +52,6 @@ def close_db(e=None):
         db.close()
 
 
-# ── DB indexes at startup ──────────────────────────────────────────────────────
-
 def ensure_indexes():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -63,6 +59,14 @@ def ensure_indexes():
     c.execute("CREATE INDEX IF NOT EXISTS idx_att_session_roll   ON attendance(session_id, roll)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_att_session_device ON attendance(session_id, device_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_students_class     ON students(class_id)")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS subject_device_log (
+            subject_id INTEGER NOT NULL,
+            device_id  TEXT NOT NULL,
+            timestamp  TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (subject_id, device_id)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -113,24 +117,19 @@ def logout():
 
 # ─────────────────────────────────────────────
 # DASHBOARD
-# Permissions:
-#   coordinator — sees everything, manages users/classes/subjects/teachers
-#   incharge    — sees their class subjects, can add subjects, assign teachers
-#   teacher     — sees only their assigned subjects, can generate QR & reports
 # ─────────────────────────────────────────────
 
 @app.route("/dashboard")
 def dashboard():
     redir = require_login()
     if redir: return redir
-    user      = current_user()
-    subjects  = get_subjects_for_user(user)
-    classes   = get_all_classes() if user["role"] in ["coordinator", "incharge"] else []
-    all_users = get_all_users()   if user["role"] == "coordinator" else []
-    teachers  = get_teachers()
-    incharges = get_incharges()
-    # All subjects list for the assign-teacher panel (coordinator only)
-    all_subjects = get_all_subjects() if user["role"] == "coordinator" else []
+    user         = current_user()
+    subjects     = get_subjects_for_user(user)
+    classes      = get_all_classes() if user["role"] in ["coordinator", "incharge"] else []
+    all_users    = get_all_users()   if user["role"] == "coordinator" else []
+    teachers     = get_teachers()
+    incharges    = get_incharges()
+    all_subjects = get_all_subjects() if user["role"] in ["coordinator", "incharge"] else []
     return render_template("dashboard.html",
         user=user,
         subjects=subjects,
@@ -221,10 +220,6 @@ def delete_subject_route(sid):
     delete_subject(sid)
     return redirect(url_for("dashboard"))
 
-# ── Assign teacher to existing subject ────────────────────────────────────────
-# This route handles the "Assign Teacher" form on the dashboard.
-# Coordinator can assign any teacher to any subject.
-# Incharge can assign teachers to subjects in their own class only.
 @app.route("/assign_teacher", methods=["POST"])
 def assign_teacher_route():
     err = require_role("coordinator", "incharge")
@@ -233,7 +228,6 @@ def assign_teacher_route():
     subject_id = int(request.form.get("subject_id"))
     teacher_id = int(request.form.get("teacher_id"))
 
-    # Incharge guard — can only assign teachers to their own class subjects
     if user["role"] == "incharge":
         subject = get_subject_by_id(subject_id)
         if not subject or subject["class_id"] != user["class_id"]:
@@ -295,8 +289,6 @@ def delete_student_route(roll):
 
 # ─────────────────────────────────────────────
 # QR GENERATION
-# Only coordinator, incharge, and teacher can generate QR.
-# Teacher can only generate QR for their own assigned subjects.
 # ─────────────────────────────────────────────
 
 @app.route("/generate_qr/<int:subject_id>")
@@ -308,18 +300,21 @@ def generate_qr_route(subject_id):
     if not subject:
         return "❌ Subject not found."
 
-    # Teacher permission check
     if user["role"] == "teacher":
         my_subjects = get_subjects_for_user(user)
         if not any(s["id"] == subject_id for s in my_subjects):
             return "❌ Access denied — not your subject.", 403
 
     session_id, qr_image = generate_qr(subject["id"], subject["name"])
+    session["active_session_id"] = session_id
+    session["active_subject_id"] = str(subject["id"])
+
     return render_template("qr_display.html",
         subject=subject,
         session_id=session_id,
         qr_image=qr_image
     )
+
 
 @app.route("/refresh_qr/<int:subject_id>")
 def refresh_qr(subject_id):
@@ -328,8 +323,35 @@ def refresh_qr(subject_id):
     subject = get_subject_by_id(subject_id)
     if not subject:
         return jsonify({"error": "Subject not found"}), 404
+
     session_id, qr_image = generate_qr(subject["id"], subject["name"])
+    session["active_session_id"] = session_id
+    session["active_subject_id"] = str(subject["id"])
+
     return jsonify({"session_id": session_id, "qr_image": qr_image})
+
+
+# ─────────────────────────────────────────────
+# SCAN COUNT (polled by qr_display.html every 10 s)
+# ─────────────────────────────────────────────
+
+@app.route("/scan_count/<int:subject_id>/<session_id>")
+def scan_count(subject_id, session_id):
+    redir = require_login()
+    if redir: return jsonify({"error": "Not logged in"}), 401
+    try:
+        conn = sqlite3.connect(DB)
+        c = conn.cursor()
+        c.execute(
+            "SELECT COUNT(DISTINCT roll) FROM attendance "
+            "WHERE subject_id = ? AND session_id = ?",
+            (subject_id, session_id)
+        )
+        count = c.fetchone()[0]
+        conn.close()
+        return jsonify({"count": count})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ─────────────────────────────────────────────
@@ -338,19 +360,30 @@ def refresh_qr(subject_id):
 
 @app.route("/scan")
 def scan():
-    subject_id = request.args.get("subject_id", "")
-    session_id = request.args.get("session_id", "")
+    subject_id = request.args.get("subject_id", "").strip()
+    session_id = request.args.get("session_id", "").strip()
 
     subject = get_subject_by_id(int(subject_id)) if subject_id else None
     if not subject:
         return render_template("confirm.html",
-            message="❌ Invalid QR code.", session_id="")
+            message="❌ Invalid QR code.",
+            session_id="",
+            success=False,
+            student_name=None,
+            roll=None,
+            subject_name=None,
+            class_name=None)
 
     device_token = issue_device_token(session_id)
     if not device_token:
         return render_template("confirm.html",
             message="❌ Invalid or expired session. Ask your teacher to refresh the QR.",
-            session_id=session_id)
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=None,
+            subject_name=subject["name"],
+            class_name=subject.get("class_name", ""))
 
     session["device_token"]    = device_token
     session["scan_subject_id"] = subject_id
@@ -363,82 +396,136 @@ def scan():
     )
 
 
+# ─────────────────────────────────────────────
+# SUBMIT ATTENDANCE
+# ─────────────────────────────────────────────
+
 @app.route("/submit_attendance", methods=["POST"])
 def submit_attendance():
     roll       = request.form.get("roll", "").strip().upper()
-    subject_id = request.form.get("subject_id", "")
-    session_id = request.form.get("session_id", "")
+    subject_id = request.form.get("subject_id", "").strip()
+    session_id = request.form.get("session_id", "").strip()
     ip_address = request.remote_addr
 
-    device_token = session.get("device_token")
+    # Prefer form-posted token; fall back to Flask session cookie
+    device_token = request.form.get("device_token") or session.get("device_token")
+
     if not device_token:
         return render_template("confirm.html",
-            message="❌ Invalid session. Please scan the QR code again.",
-            session_id=session_id)
+            message="Invalid session. Please scan the QR code again.",
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=None,
+            subject_name=None,
+            class_name=None)
 
-    # ── Step 1: Consume the one-time session token ─────────────────────────
+    # ── Step 1: Validate inputs ──────────────────────────────────────────────
+    if not roll:
+        return render_template("confirm.html",
+            message="Please enter your roll number.",
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=None,
+            subject_name=None,
+            class_name=None)
+
+    if not subject_id or not session_id:
+        return render_template("confirm.html",
+            message="Invalid QR code data. Please scan again.",
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=None,
+            subject_name=None,
+            class_name=None)
+
+    subject = get_subject_by_id(int(subject_id))
+    if not subject:
+        return render_template("confirm.html",
+            message="Subject not found. Contact your teacher.",
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=None,
+            subject_name=None,
+            class_name=None)
+
+    # Grab subject details for use in all responses below
+    subject_name = subject["name"]
+    class_name   = subject.get("class_name", "")
+
+    # ── Step 2: Validate roll number against the correct class ───────────────
+    if not roll_exists(roll, subject["class_id"]):
+        return render_template("confirm.html",
+            message=f"Roll number '{roll}' not found in this class. Please check and scan again.",
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=roll,
+            subject_name=subject_name,
+            class_name=class_name)
+
+    # ── Step 3: Check if this roll already marked attendance this session ────
+    already, dup_reason = has_already_submitted(session_id, roll=roll)
+    if already:
+        return render_template("confirm.html",
+            message="Attendance already marked for this roll number in this session.",
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=roll,
+            subject_name=subject_name,
+            class_name=class_name)
+
+    # ── Step 4: Atomically consume the one-time device token ─────────────────
     allowed, reason = consume_device_token(session_id, device_token)
     if not allowed:
         error_messages = {
-            "invalid_session":    "❌ Session expired. Ask your teacher to refresh the QR.",
-            "unrecognized_token": "❌ Invalid token. Please scan the QR code again.",
-            "already_used":       "❌ This device has already submitted for this session.",
+            "invalid_session":    "Session expired. Ask your teacher to refresh the QR code.",
+            "unrecognized_token": "Invalid token. Please scan the QR code again.",
+            "already_used":       "This device has already submitted for this session.",
         }
         return render_template("confirm.html",
-            message=error_messages.get(reason, "❌ Already submitted."),
-            session_id=session_id)
+            message=error_messages.get(reason, "Already submitted."),
+            session_id=session_id,
+            success=False,
+            student_name=None,
+            roll=roll,
+            subject_name=subject_name,
+            class_name=class_name)
 
-    subject = get_subject_by_id(int(subject_id)) if subject_id else None
-    if not subject:
-        return render_template("confirm.html",
-            message="❌ Invalid subject.", session_id=session_id)
-
-    # ── Step 2: One device per subject (across ALL sessions) ───────────────
-    # This is the new unique feature — a device can only ever mark attendance
-    # once for a given subject, even if the QR is refreshed.
-    if is_device_blocked_for_subject(subject["id"], device_token):
-        return render_template("confirm.html",
-            message="❌ This device has already marked attendance for this subject.",
-            session_id=session_id)
-
-    # ── Step 3: Validate roll number ───────────────────────────────────────
-    # FIX: use subject["class_id"] so roll is checked against the correct class
-    if not roll_exists(roll, subject["class_id"]):
-        return render_template("confirm.html",
-            message=f"❌ Roll number '{roll}' not found in this class. Check and try again.",
-            session_id=session_id)
-
-    # ── Step 4: Check for duplicate within this session ────────────────────
-    already, reason = has_already_submitted(
-        session_id, device_id=device_token, roll=roll, ip_address=ip_address)
-    if already:
-        msgs = {
-            "roll":   "❌ Attendance already marked for this roll number.",
-            "device": "❌ This device has already marked attendance.",
-            "ip":     "❌ Attendance already marked from this network.",
-        }
-        return render_template("confirm.html",
-            message=msgs.get(reason, "❌ Already submitted."), session_id=session_id)
-
-    # ── Step 5: Mark attendance ────────────────────────────────────────────
-    name = get_student_name(roll) or "Unknown"
-    success = mark_attendance(
+    # ── Step 5: Insert attendance record ─────────────────────────────────────
+    name   = get_student_name(roll) or roll
+    marked = mark_attendance(
         subject["id"], subject["name"], subject["class_id"],
         session_id, roll, name, device_token, ip_address
     )
 
     session.pop("device_token", None)
 
-    if not success:
+    if not marked:
+        # UNIQUE(session_id, roll) constraint fired — already exists
         return render_template("confirm.html",
-            message="❌ Already submitted (duplicate blocked).", session_id=session_id)
+            message="Attendance already recorded for this roll number.",
+            session_id=session_id,
+            success=False,
+            student_name=name,
+            roll=roll,
+            subject_name=subject_name,
+            class_name=class_name)
 
-    # ── Step 6: Register device for this subject (one-device-per-subject) ──
-    register_device_for_subject(subject["id"], device_token)
-
+    # ── Step 6: Success ───────────────────────────────────────────────────────
     return render_template("confirm.html",
-        message=f"✅ Attendance marked for {name} ({roll})",
-        session_id=session_id)
+        message=f"Attendance marked for {name} ({roll})",
+        session_id=session_id,
+        success=True,
+        student_name=name,
+        roll=roll,
+        subject_name=subject_name,
+        class_name=class_name
+    )
 
 
 # ─────────────────────────────────────────────
@@ -454,13 +541,15 @@ def view_attendance(subject_id):
     if not subject:
         return "❌ Subject not found."
 
-    final_df, date_cols = generate_report_for_subject(subject_id, subject["class_id"])
-    students_data = final_df.to_dict(orient="records") if not final_df.empty else []
+    students_data, date_cols = get_attendance_summary(subject_id, subject["class_id"])
+    records = get_attendance_records(subject_id)
 
     return render_template("view_attendance.html",
         subject=subject,
         students_data=students_data,
         date_cols=date_cols,
+        all_dates=date_cols,
+        records=records,
         total_students=len(students_data),
         message="" if students_data else "⚠️ No attendance records found for this subject yet."
     )
@@ -468,9 +557,6 @@ def view_attendance(subject_id):
 
 # ─────────────────────────────────────────────
 # REPORTS
-# coordinator — all subjects/classes
-# incharge    — their class only
-# teacher     — their assigned subjects only
 # ─────────────────────────────────────────────
 
 @app.route("/report/<int:subject_id>")
