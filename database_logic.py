@@ -8,7 +8,7 @@ DB = os.environ.get("DB_PATH", "attendance.db")
 
 def get_db():
     conn = sqlite3.connect(DB)
-    conn.execute("PRAGMA journal_mode=WAL")   # better concurrent reads
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -85,9 +85,7 @@ def init_db():
         )
     """)
 
-    # ── Persistent device-token store (replaces the old in-memory dict) ───────
-    # status: 'issued' | 'used'
-    # expires_at: tokens auto-expire after 24h via cleanup_expired_tokens()
+    # ── Persistent device-token store ─────────────────────────────────────────
     c.execute("""
         CREATE TABLE IF NOT EXISTS session_tokens (
             session_id   TEXT NOT NULL,
@@ -101,6 +99,18 @@ def init_db():
         )
     """)
 
+    # ── NEW: one-device-per-subject enforcement ───────────────────────────────
+    # Stores a fingerprint (device_id) per subject so the same device cannot
+    # mark attendance more than once for the same subject across ALL sessions.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS subject_device_log (
+            subject_id INTEGER NOT NULL,
+            device_id  TEXT NOT NULL,
+            timestamp  TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (subject_id, device_id)
+        )
+    """)
+
     # ── Performance indexes ───────────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_att_subject   ON attendance(subject_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_att_sess_roll ON attendance(session_id, roll)")
@@ -109,10 +119,11 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_students_cls  ON students(class_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_tok_sess      ON session_tokens(session_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_tok_expires   ON session_tokens(expires_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_subdev        ON subject_device_log(subject_id, device_id)")
 
     conn.commit()
 
-    # Default coordinator
+    # Default coordinator account (created only on first run)
     c.execute("SELECT COUNT(*) FROM users")
     if c.fetchone()[0] == 0:
         c.execute("""
@@ -338,6 +349,25 @@ def get_subject_by_id(subject_id):
     return None
 
 
+def get_all_subjects():
+    """Return all subjects with class and teacher info — used by coordinator."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.id, s.name, cl.name AS class_name, u.full_name AS teacher_name,
+               s.class_id, s.teacher_id
+        FROM subjects s
+        JOIN classes cl ON s.class_id = cl.id
+        LEFT JOIN users u ON s.teacher_id = u.id
+        ORDER BY cl.name, s.name
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "name": r[1], "class_name": r[2],
+             "teacher_name": r[3], "class_id": r[4], "teacher_id": r[5]}
+            for r in rows]
+
+
 # ══════════════════════════════════════════
 # STUDENT MANAGEMENT
 # ══════════════════════════════════════════
@@ -367,7 +397,6 @@ def get_all_students():
 
 
 def add_student(roll, name, class_id):
-    """Add or update a student (upsert on roll)."""
     conn = get_db()
     c = conn.cursor()
     try:
@@ -384,7 +413,6 @@ def add_student(roll, name, class_id):
 
 
 def delete_student(roll):
-    """Delete a student by roll number."""
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM students WHERE roll = ?", (roll.upper(),))
@@ -399,10 +427,6 @@ def delete_student(roll):
 # ══════════════════════════════════════════
 
 def db_issue_token(session_id, device_token):
-    """
-    Record a newly-issued device token as 'issued'.
-    Called by qr_generator.issue_device_token() right after the token is created.
-    """
     conn = get_db()
     c = conn.cursor()
     try:
@@ -422,12 +446,8 @@ def db_issue_token(session_id, device_token):
 def db_consume_token(session_id, device_token):
     """
     Atomically check that the token is 'issued' then flip it to 'used'.
-
     Returns (True, None) on success.
-    Returns (False, reason) on failure — reason is one of:
-        'invalid_session'    — no tokens recorded for this session at all
-        'unrecognized_token' — token was never issued for this session
-        'already_used'       — token already consumed
+    Returns (False, reason) on failure.
     """
     conn = get_db()
     c = conn.cursor()
@@ -439,7 +459,6 @@ def db_consume_token(session_id, device_token):
         row = c.fetchone()
 
         if row is None:
-            # Distinguish missing session from missing token
             c.execute("SELECT 1 FROM session_tokens WHERE session_id=?", (session_id,))
             if c.fetchone() is None:
                 return False, "invalid_session"
@@ -459,7 +478,6 @@ def db_consume_token(session_id, device_token):
 
 
 def cleanup_expired_tokens():
-    """Remove tokens older than their expires_at. Safe to call anytime."""
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM session_tokens WHERE expires_at < datetime('now')")
@@ -467,6 +485,43 @@ def cleanup_expired_tokens():
     conn.commit()
     conn.close()
     return deleted
+
+
+# ══════════════════════════════════════════
+# ONE DEVICE PER SUBJECT  (new feature)
+# ══════════════════════════════════════════
+
+def is_device_blocked_for_subject(subject_id, device_id):
+    """
+    Returns True if this device has already marked attendance for this
+    subject in ANY previous session.  Blocks repeat scanning across sessions.
+    """
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        "SELECT 1 FROM subject_device_log WHERE subject_id=? AND device_id=?",
+        (subject_id, device_id)
+    )
+    found = c.fetchone() is not None
+    conn.close()
+    return found
+
+
+def register_device_for_subject(subject_id, device_id):
+    """
+    Record that this device has marked attendance for this subject.
+    Called after successful mark_attendance().
+    """
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT OR IGNORE INTO subject_device_log (subject_id, device_id) VALUES (?, ?)",
+            (subject_id, device_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ══════════════════════════════════════════
@@ -511,7 +566,8 @@ def roll_exists(roll, class_id=None):
     return result is not None
 
 
-def mark_attendance(subject_id, subject_name, class_id, session_id, roll, name, device_id, ip_address):
+def mark_attendance(subject_id, subject_name, class_id, session_id,
+                    roll, name, device_id, ip_address):
     conn = get_db()
     c = conn.cursor()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -545,7 +601,6 @@ def get_student_name(roll):
 
 
 def get_attendance_records(subject_id):
-    """Raw log — roll, name, session_id, timestamp, ip. Used for the live-log tab."""
     conn = get_db()
     c = conn.cursor()
     c.execute("""
@@ -569,14 +624,6 @@ def get_attendance_records(subject_id):
 # ══════════════════════════════════════════
 
 def get_attendance_summary(subject_id, class_id):
-    """
-    Returns (summary_list, all_dates) for the view_attendance template.
-
-    Each entry in summary_list is a dict:
-        roll, name, classes_present, total_classes, pct, dates (dict date->P/A)
-
-    all_dates is a sorted list of ISO date strings representing every class held.
-    """
     conn = get_db()
     c = conn.cursor()
 
@@ -598,7 +645,6 @@ def get_attendance_summary(subject_id, class_id):
     all_dates = sorted({r[1] for r in records})
     total_classes = len(all_dates)
 
-    # roll -> set of dates where student was present
     present_map = {}
     for roll, date in records:
         present_map.setdefault(roll, set()).add(date)
@@ -629,11 +675,7 @@ def seed_students_from_excel(class_id=None):
     """
     Seed students from student_list.xlsx.
     Required columns: roll, name, class_id
-    (column names are stripped + lowercased automatically).
-
-    If class_id column is missing, the `class_id` argument is used as fallback.
-    Add rows for all sections (BCA-A=1, BCA-B=2, BCA(AI)=3) so every class
-    is seeded in a single pass.
+    Column names are stripped + lowercased automatically.
     """
     xlsx_path = "student_list.xlsx"
     if not os.path.exists(xlsx_path):
@@ -642,6 +684,7 @@ def seed_students_from_excel(class_id=None):
 
     try:
         df = pd.read_excel(xlsx_path)
+        # Strip whitespace from column names (fixes 'roll ' bug found in your file)
         df.rename(columns=lambda x: x.strip().lower(), inplace=True)
         df["roll"] = df["roll"].astype(str).str.strip().str.upper()
         df["name"] = df["name"].astype(str).str.strip()
@@ -691,11 +734,21 @@ def load_student_list():
 # ══════════════════════════════════════════
 
 def generate_report_for_subject(subject_id, class_id):
+    """
+    Build a DataFrame with one row per student showing:
+      Roll | Name | <date1> | <date2> | ... | Total Classes | Classes Present | Attendance %
+
+    P = present on that date, A = absent.
+    """
     conn = get_db()
     c = conn.cursor()
+
+    # All students in this class
     c.execute("SELECT roll, name FROM students WHERE class_id = ? ORDER BY roll", (class_id,))
     students = c.fetchall()
 
+    # All attendance records for this subject
+    # Use session_id to count UNIQUE class sessions (one session = one class held)
     c.execute("""
         SELECT roll, DATE(timestamp) AS date, session_id
         FROM attendance
@@ -716,25 +769,29 @@ def generate_report_for_subject(subject_id, class_id):
         return student_df, []
 
     att_df = pd.DataFrame(records, columns=["Roll", "Date", "Session"])
+    # One record per student per date (in case of duplicates)
     att_df = att_df.drop_duplicates(subset=["Roll", "Date"])
     att_df["Status"] = "P"
 
+    # Pivot: rows=Roll, columns=Date, values=P
     pivot = att_df.pivot_table(
         index="Roll", columns="Date",
-        values="Status", aggfunc="first", fill_value="A"
+        values="Status", aggfunc="first"
     )
     pivot.reset_index(inplace=True)
 
+    # Merge all students (left join so absent students appear with A)
     final_df = pd.merge(student_df, pivot, on="Roll", how="left")
     date_cols = [col for col in final_df.columns if col not in ["Roll", "Name"]]
 
+    # Fill NaN with "A" for students who didn't attend
     for col in date_cols:
         final_df[col] = final_df[col].fillna("A")
 
     total_classes = len(date_cols)
     final_df["Total Classes"] = total_classes
     final_df["Classes Present"] = final_df[date_cols].apply(
-        lambda row: sum(x == "P" for x in row), axis=1
+        lambda row: sum(str(x) == "P" for x in row), axis=1
     )
     final_df["Attendance %"] = (
         (final_df["Classes Present"] / total_classes * 100).round(2)

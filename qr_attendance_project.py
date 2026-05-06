@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, g
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, g
 
 from database_logic import (
     init_db, seed_students_from_excel, load_student_list,
@@ -8,21 +8,20 @@ from database_logic import (
     add_user, delete_user, get_all_users, get_teachers, get_incharges,
     add_class, delete_class, get_all_classes, assign_incharge_to_class,
     add_subject, delete_subject, assign_teacher_to_subject,
-    get_subjects_for_user, get_subject_by_id,
+    get_subjects_for_user, get_subject_by_id, get_all_subjects,
     authenticate_user, generate_report_for_subject,
     get_attendance_records,
-    get_students_by_class, get_all_students, add_student, delete_student
+    get_students_by_class, get_all_students, add_student, delete_student,
+    is_device_blocked_for_subject, register_device_for_subject
 )
 from qr_generator import generate_qr, issue_device_token, consume_device_token, cleanup_old_tokens
 
 app = Flask(__name__)
 
-# ── Issue 5b: Secret key from environment — never hardcode ────────────────────
+# Secret key from environment — never hardcode
 app.secret_key = os.environ.get("SECRET_KEY", "fallback-only-for-dev")
 
-# ── Issue 5a: DB path from environment so Render Persistent Disk works ────────
-#   On Render: set DB_PATH=/data/attendance.db in Environment Variables
-#   and mount a Persistent Disk at /data.
+# DB path from environment (set DB_PATH=/data/attendance.db on Render with Persistent Disk)
 DB = os.environ.get("DB_PATH", "attendance.db")
 
 init_db()
@@ -40,15 +39,13 @@ def seed_all_classes():
 seed_all_classes()
 
 
-# ── Issue 4c: Per-request DB connection via Flask's g object ──────────────────
+# ── Per-request DB connection ──────────────────────────────────────────────────
 
 def get_db():
-    """Return a per-request SQLite connection (created once, closed on teardown)."""
     if "db" not in g:
         g.db = sqlite3.connect(DB, check_same_thread=False)
         g.db.row_factory = sqlite3.Row
     return g.db
-
 
 @app.teardown_appcontext
 def close_db(e=None):
@@ -57,7 +54,7 @@ def close_db(e=None):
         db.close()
 
 
-# ── Issue 4a: DB indexes — run once at startup ────────────────────────────────
+# ── DB indexes at startup ──────────────────────────────────────────────────────
 
 def ensure_indexes():
     conn = sqlite3.connect(DB)
@@ -70,12 +67,10 @@ def ensure_indexes():
     conn.close()
 
 ensure_indexes()
-
-# ── Issue 1 fix: Remove device tokens older than 7 days on every startup ──────
 cleanup_old_tokens()
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# ── Role helpers ───────────────────────────────────────────────────────────────
 
 def current_user():
     return session.get("user_data")
@@ -118,6 +113,10 @@ def logout():
 
 # ─────────────────────────────────────────────
 # DASHBOARD
+# Permissions:
+#   coordinator — sees everything, manages users/classes/subjects/teachers
+#   incharge    — sees their class subjects, can add subjects, assign teachers
+#   teacher     — sees only their assigned subjects, can generate QR & reports
 # ─────────────────────────────────────────────
 
 @app.route("/dashboard")
@@ -130,18 +129,21 @@ def dashboard():
     all_users = get_all_users()   if user["role"] == "coordinator" else []
     teachers  = get_teachers()
     incharges = get_incharges()
+    # All subjects list for the assign-teacher panel (coordinator only)
+    all_subjects = get_all_subjects() if user["role"] == "coordinator" else []
     return render_template("dashboard.html",
         user=user,
         subjects=subjects,
         classes=classes,
         all_users=all_users,
         teachers=teachers,
-        incharges=incharges
+        incharges=incharges,
+        all_subjects=all_subjects
     )
 
 
 # ─────────────────────────────────────────────
-# USER MANAGEMENT (coordinator only)
+# USER MANAGEMENT  (coordinator only)
 # ─────────────────────────────────────────────
 
 @app.route("/add_user", methods=["POST"])
@@ -167,7 +169,7 @@ def delete_user_route(uid):
 
 
 # ─────────────────────────────────────────────
-# CLASS MANAGEMENT (coordinator only)
+# CLASS MANAGEMENT  (coordinator only)
 # ─────────────────────────────────────────────
 
 @app.route("/add_class", methods=["POST"])
@@ -197,7 +199,7 @@ def assign_incharge_route():
 
 
 # ─────────────────────────────────────────────
-# SUBJECT MANAGEMENT (coordinator + incharge)
+# SUBJECT MANAGEMENT  (coordinator + incharge)
 # ─────────────────────────────────────────────
 
 @app.route("/add_subject", methods=["POST"])
@@ -219,12 +221,24 @@ def delete_subject_route(sid):
     delete_subject(sid)
     return redirect(url_for("dashboard"))
 
+# ── Assign teacher to existing subject ────────────────────────────────────────
+# This route handles the "Assign Teacher" form on the dashboard.
+# Coordinator can assign any teacher to any subject.
+# Incharge can assign teachers to subjects in their own class only.
 @app.route("/assign_teacher", methods=["POST"])
 def assign_teacher_route():
     err = require_role("coordinator", "incharge")
     if err: return err
+    user       = current_user()
     subject_id = int(request.form.get("subject_id"))
     teacher_id = int(request.form.get("teacher_id"))
+
+    # Incharge guard — can only assign teachers to their own class subjects
+    if user["role"] == "incharge":
+        subject = get_subject_by_id(subject_id)
+        if not subject or subject["class_id"] != user["class_id"]:
+            return "❌ Access denied — subject not in your class.", 403
+
     assign_teacher_to_subject(subject_id, teacher_id)
     return redirect(url_for("dashboard"))
 
@@ -281,15 +295,25 @@ def delete_student_route(roll):
 
 # ─────────────────────────────────────────────
 # QR GENERATION
+# Only coordinator, incharge, and teacher can generate QR.
+# Teacher can only generate QR for their own assigned subjects.
 # ─────────────────────────────────────────────
 
 @app.route("/generate_qr/<int:subject_id>")
 def generate_qr_route(subject_id):
     redir = require_login()
     if redir: return redir
+    user    = current_user()
     subject = get_subject_by_id(subject_id)
     if not subject:
         return "❌ Subject not found."
+
+    # Teacher permission check
+    if user["role"] == "teacher":
+        my_subjects = get_subjects_for_user(user)
+        if not any(s["id"] == subject_id for s in my_subjects):
+            return "❌ Access denied — not your subject.", 403
+
     session_id, qr_image = generate_qr(subject["id"], subject["name"])
     return render_template("qr_display.html",
         subject=subject,
@@ -319,11 +343,14 @@ def scan():
 
     subject = get_subject_by_id(int(subject_id)) if subject_id else None
     if not subject:
-        return "❌ Invalid QR code."
+        return render_template("confirm.html",
+            message="❌ Invalid QR code.", session_id="")
 
     device_token = issue_device_token(session_id)
     if not device_token:
-        return "❌ Invalid or expired session."
+        return render_template("confirm.html",
+            message="❌ Invalid or expired session. Ask your teacher to refresh the QR.",
+            session_id=session_id)
 
     session["device_token"]    = device_token
     session["scan_subject_id"] = subject_id
@@ -349,12 +376,13 @@ def submit_attendance():
             message="❌ Invalid session. Please scan the QR code again.",
             session_id=session_id)
 
+    # ── Step 1: Consume the one-time session token ─────────────────────────
     allowed, reason = consume_device_token(session_id, device_token)
     if not allowed:
         error_messages = {
-            "invalid_session":    "❌ Session expired. Please scan the QR code again.",
+            "invalid_session":    "❌ Session expired. Ask your teacher to refresh the QR.",
             "unrecognized_token": "❌ Invalid token. Please scan the QR code again.",
-            "already_used":       "❌ This device has already marked attendance.",
+            "already_used":       "❌ This device has already submitted for this session.",
         }
         return render_template("confirm.html",
             message=error_messages.get(reason, "❌ Already submitted."),
@@ -365,10 +393,22 @@ def submit_attendance():
         return render_template("confirm.html",
             message="❌ Invalid subject.", session_id=session_id)
 
+    # ── Step 2: One device per subject (across ALL sessions) ───────────────
+    # This is the new unique feature — a device can only ever mark attendance
+    # once for a given subject, even if the QR is refreshed.
+    if is_device_blocked_for_subject(subject["id"], device_token):
+        return render_template("confirm.html",
+            message="❌ This device has already marked attendance for this subject.",
+            session_id=session_id)
+
+    # ── Step 3: Validate roll number ───────────────────────────────────────
+    # FIX: use subject["class_id"] so roll is checked against the correct class
     if not roll_exists(roll, subject["class_id"]):
         return render_template("confirm.html",
-            message="❌ Roll number not found in this class.", session_id=session_id)
+            message=f"❌ Roll number '{roll}' not found in this class. Check and try again.",
+            session_id=session_id)
 
+    # ── Step 4: Check for duplicate within this session ────────────────────
     already, reason = has_already_submitted(
         session_id, device_id=device_token, roll=roll, ip_address=ip_address)
     if already:
@@ -380,6 +420,7 @@ def submit_attendance():
         return render_template("confirm.html",
             message=msgs.get(reason, "❌ Already submitted."), session_id=session_id)
 
+    # ── Step 5: Mark attendance ────────────────────────────────────────────
     name = get_student_name(roll) or "Unknown"
     success = mark_attendance(
         subject["id"], subject["name"], subject["class_id"],
@@ -392,13 +433,16 @@ def submit_attendance():
         return render_template("confirm.html",
             message="❌ Already submitted (duplicate blocked).", session_id=session_id)
 
+    # ── Step 6: Register device for this subject (one-device-per-subject) ──
+    register_device_for_subject(subject["id"], device_token)
+
     return render_template("confirm.html",
         message=f"✅ Attendance marked for {name} ({roll})",
         session_id=session_id)
 
 
 # ─────────────────────────────────────────────
-# VIEW ATTENDANCE  (Issue 3 fix)
+# VIEW ATTENDANCE
 # ─────────────────────────────────────────────
 
 @app.route("/view_attendance/<int:subject_id>")
@@ -410,11 +454,7 @@ def view_attendance(subject_id):
     if not subject:
         return "❌ Subject not found."
 
-    # Use the same report function that drives the Excel export so that
-    # date-wise columns and per-student percentage are shown in the web view.
     final_df, date_cols = generate_report_for_subject(subject_id, subject["class_id"])
-
-    # Convert DataFrame → list-of-dicts so Jinja can iterate easily.
     students_data = final_df.to_dict(orient="records") if not final_df.empty else []
 
     return render_template("view_attendance.html",
@@ -428,6 +468,9 @@ def view_attendance(subject_id):
 
 # ─────────────────────────────────────────────
 # REPORTS
+# coordinator — all subjects/classes
+# incharge    — their class only
+# teacher     — their assigned subjects only
 # ─────────────────────────────────────────────
 
 @app.route("/report/<int:subject_id>")
@@ -462,6 +505,7 @@ def report(subject_id):
 
     _apply_colors(filepath, date_cols)
     return redirect(url_for("download_export", filename=filename))
+
 
 @app.route("/report/class/<int:class_id>")
 def report_class(class_id):
@@ -501,6 +545,7 @@ def report_class(class_id):
     _apply_colors(filepath)
     return redirect(url_for("download_export", filename=filename))
 
+
 @app.route("/report/all")
 def report_all():
     err = require_role("coordinator")
@@ -536,7 +581,6 @@ def report_all():
 
 
 def _apply_colors(filepath, date_cols=None):
-    """Apply color formatting to the Excel report."""
     from openpyxl import load_workbook
     from openpyxl.styles import PatternFill, Font, Alignment
     from openpyxl.utils import get_column_letter
