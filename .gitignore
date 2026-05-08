@@ -14,7 +14,8 @@ env/
 exports/
 static/qr_codes/*.png
 
-# Excel lock files
+# Excel files (student list managed via UI, reports are generated on demand)
+*.xlsx
 .~lock.*.xlsx#
 
 # OS
