@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Database (local dev only — use PostgreSQL in production)
+*.db
+*.db-journal
+
+# Generated files
+exports/
+static/qr_codes/*.png
+
+# Excel lock files
+.~lock.*.xlsx#
+
+# OS
+.DS_Store
+Thumbs.db
