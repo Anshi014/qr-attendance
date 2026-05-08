@@ -1,4 +1,3 @@
-import sqlite3
 import os
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, g
 
@@ -18,7 +17,6 @@ from qr_generator import generate_qr, issue_device_token, consume_device_token, 
 app = Flask(__name__)
 
 app.secret_key = os.environ.get("SECRET_KEY", "fallback-only-for-dev")
-DB = os.environ.get("DB_PATH", "attendance.db")
 
 init_db()
 
@@ -26,10 +24,10 @@ init_db()
 def seed_all_classes():
     if not os.path.exists("student_list.xlsx"):
         return
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT id FROM classes")
-    class_ids = [row[0] for row in c.fetchall()]
+    from database_logic import get_db
+    conn = get_db()
+    rows = conn.run("SELECT id FROM classes")
+    class_ids = [row[0] for row in rows]
     conn.close()
     for cid in class_ids:
         seed_students_from_excel(class_id=cid)
@@ -37,13 +35,13 @@ def seed_all_classes():
 seed_all_classes()
 
 
-# ── Per-request DB connection ──────────────────────────────────────────────────
+# ── Per-request DB connection (DEPRECATED — all DB ops now use database_logic) ──────────────────────────────────────────────
 
-def get_db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DB, check_same_thread=False)
-        g.db.row_factory = sqlite3.Row
-    return g.db
+# def get_db():
+#     if "db" not in g:
+#         g.db = sqlite3.connect(DB, check_same_thread=False)
+#         g.db.row_factory = sqlite3.Row
+#     return g.db
 
 @app.teardown_appcontext
 def close_db(e=None):
@@ -53,22 +51,9 @@ def close_db(e=None):
 
 
 def ensure_indexes():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("CREATE INDEX IF NOT EXISTS idx_att_subject        ON attendance(subject_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_att_session_roll   ON attendance(session_id, roll)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_att_session_device ON attendance(session_id, device_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_students_class     ON students(class_id)")
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS subject_device_log (
-            subject_id INTEGER NOT NULL,
-            device_id  TEXT NOT NULL,
-            timestamp  TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY (subject_id, device_id)
-        )
-    """)
-    conn.commit()
-    conn.close()
+    """DEPRECATED — indexes are created in database_logic.init_db()"""
+    # All database indexes are now created in database_logic.init_db()
+    pass
 
 ensure_indexes()
 cleanup_old_tokens()
@@ -291,6 +276,32 @@ def delete_student_route(roll):
 # QR GENERATION
 # ─────────────────────────────────────────────
 
+def _get_lan_ip():
+    """Detect this machine's outbound LAN IP (e.g. 10.x.x.x or 192.168.x.x).
+    Works by opening a UDP socket to an external address — no data is sent."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))          # connect to Google DNS (no data sent)
+        lan_ip = s.getsockname()[0]
+        s.close()
+        return lan_ip
+    except Exception:
+        return "127.0.0.1"                  # fallback
+
+
+def _get_base_url():
+    """Return the server's base URL for embedding in QR codes.
+    - localhost/127.0.0.1: swap in the LAN IP so students on the same network can reach the app.
+    - Any other host (public domain, LAN IP already in the URL): use the request host as-is."""
+    host = request.host.split(":")[0]
+    if host in ("localhost", "127.0.0.1"):
+        port = request.host.split(":")[-1] if ":" in request.host else "5000"
+        return f"http://{_get_lan_ip()}:{port}"
+    scheme = "https" if request.is_secure else "http"
+    return f"{scheme}://{request.host}"
+
+
 @app.route("/generate_qr/<int:subject_id>")
 def generate_qr_route(subject_id):
     redir = require_login()
@@ -305,7 +316,8 @@ def generate_qr_route(subject_id):
         if not any(s["id"] == subject_id for s in my_subjects):
             return "❌ Access denied — not your subject.", 403
 
-    session_id, qr_image = generate_qr(subject["id"], subject["name"])
+    base_url   = _get_base_url()
+    session_id, qr_image = generate_qr(subject["id"], subject["name"], base_url=base_url)
     session["active_session_id"] = session_id
     session["active_subject_id"] = str(subject["id"])
 
@@ -324,12 +336,37 @@ def refresh_qr(subject_id):
     if not subject:
         return jsonify({"error": "Subject not found"}), 404
 
-    session_id, qr_image = generate_qr(subject["id"], subject["name"])
+    base_url   = _get_base_url()
+    session_id, qr_image = generate_qr(subject["id"], subject["name"], base_url=base_url)
     session["active_session_id"] = session_id
     session["active_subject_id"] = str(subject["id"])
 
     return jsonify({"session_id": session_id, "qr_image": qr_image})
 
+
+# ─────────────────────────────────────────────
+# DEBUG: Attendance check endpoint
+# ─────────────────────────────────────────────
+
+@app.route("/debug/attendance_check")
+def debug_attendance_check():
+    """Debug endpoint to check all attendance records in database"""
+    redir = require_login()
+    if redir: return redir
+    try:
+        from database_logic import get_db
+        conn = get_db()
+        rows = conn.run("SELECT COUNT(*) FROM attendance")
+        total_count = rows[0][0] if rows else 0
+        
+        rows = conn.run("SELECT subject_id, session_id, roll, name, timestamp FROM attendance ORDER BY timestamp DESC LIMIT 20")
+        records = [{"subject_id": r[0], "session_id": r[1], "roll": r[2], "name": r[3], "timestamp": r[4]} for r in rows]
+        conn.close()
+        
+        return jsonify({"total_records": total_count, "recent_records": records})
+    except Exception as e:
+        print(f"[ERROR] debug_attendance_check: {e}", flush=True)
+        return jsonify({"error": str(e)}), 500
 
 # ─────────────────────────────────────────────
 # SCAN COUNT (polled by qr_display.html every 10 s)
@@ -340,17 +377,21 @@ def scan_count(subject_id, session_id):
     redir = require_login()
     if redir: return jsonify({"error": "Not logged in"}), 401
     try:
-        conn = sqlite3.connect(DB)
-        c = conn.cursor()
-        c.execute(
+        # Import the database function from database_logic to use PostgreSQL
+        from database_logic import get_db
+        conn = get_db()
+        print(f"[DEBUG] Querying attendance: subject_id={subject_id}, session_id={session_id}", flush=True)
+        rows = conn.run(
             "SELECT COUNT(DISTINCT roll) FROM attendance "
-            "WHERE subject_id = ? AND session_id = ?",
-            (subject_id, session_id)
+            "WHERE subject_id = :sid AND session_id = :sess",
+            sid=subject_id, sess=session_id
         )
-        count = c.fetchone()[0]
+        count = rows[0][0] if rows else 0
+        print(f"[DEBUG] Query result: count={count}, rows={rows}", flush=True)
         conn.close()
         return jsonify({"count": count})
     except Exception as e:
+        print(f"[ERROR] scan_count failed: {e}", flush=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -363,8 +404,11 @@ def scan():
     subject_id = request.args.get("subject_id", "").strip()
     session_id = request.args.get("session_id", "").strip()
 
+    print(f"[DEBUG] /scan endpoint hit: subject_id={subject_id}, session_id={session_id}", flush=True)
+
     subject = get_subject_by_id(int(subject_id)) if subject_id else None
     if not subject:
+        print(f"[ERROR] /scan: Subject not found for subject_id={subject_id}", flush=True)
         return render_template("confirm.html",
             message="❌ Invalid QR code.",
             session_id="",
@@ -389,6 +433,8 @@ def scan():
     session["scan_subject_id"] = subject_id
     session["scan_session_id"] = session_id
 
+    print(f"[DEBUG] /scan: Successfully rendering scan.html with subject_id={subject_id}, session_id={session_id}, device_token={device_token[:16]}...", flush=True)
+
     return render_template("scan.html",
         subject=subject,
         session_id=session_id,
@@ -409,6 +455,8 @@ def submit_attendance():
 
     # Prefer form-posted token; fall back to Flask session cookie
     device_token = request.form.get("device_token") or session.get("device_token")
+
+    print(f"[DEBUG] submit_attendance called: roll={roll}, subject_id={subject_id}, session_id={session_id}, device_token={device_token[:16] if device_token else None}...", flush=True)
 
     if not device_token:
         return render_template("confirm.html",
@@ -605,19 +653,17 @@ def report_class(class_id):
 
     from datetime import datetime as dt
     import pandas as pd
+    from database_logic import get_db
 
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT id, name FROM subjects WHERE class_id = ?", (class_id,))
-    subs = c.fetchall()
-    c.execute("SELECT name FROM classes WHERE id = ?", (class_id,))
-    cls_row = c.fetchone()
+    conn = get_db()
+    subs = conn.run("SELECT id, name FROM subjects WHERE class_id = :c", c=class_id)
+    cls_row = conn.run("SELECT name FROM classes WHERE id = :c", c=class_id)
     conn.close()
 
     if not subs:
         return "⚠️ No subjects found for this class."
 
-    class_name = cls_row[0] if cls_row else f"Class_{class_id}"
+    class_name = cls_row[0][0] if cls_row else f"Class_{class_id}"
     os.makedirs("exports", exist_ok=True)
     filename = f"{class_name}_Full_Report_{dt.now().strftime('%B_%Y')}.xlsx"
     filepath = os.path.join("exports", filename)
@@ -639,11 +685,10 @@ def report_all():
 
     from datetime import datetime as dt
     import pandas as pd
+    from database_logic import get_db
 
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT id, name FROM classes ORDER BY name")
-    classes = c.fetchall()
+    conn = get_db()
+    classes = conn.run("SELECT id, name FROM classes ORDER BY name")
     conn.close()
 
     os.makedirs("exports", exist_ok=True)
@@ -652,10 +697,8 @@ def report_all():
 
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
         for cls_id, cls_name in classes:
-            conn = sqlite3.connect(DB)
-            c = conn.cursor()
-            c.execute("SELECT id, name FROM subjects WHERE class_id = ?", (cls_id,))
-            subs = c.fetchall()
+            conn = get_db()
+            subs = conn.run("SELECT id, name FROM subjects WHERE class_id = :c", c=cls_id)
             conn.close()
             for sub_id, sub_name in subs:
                 sheet = f"{cls_name}-{sub_name}"[:31]

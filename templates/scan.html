@@ -180,6 +180,7 @@
     // FIX 4: Prevent double-submit, show spinner on submit
     function handleSubmit(form) {
         var roll = document.getElementById("roll").value.trim();
+        console.log("[DEBUG] handleSubmit called: roll=" + roll, flush=True);
         if (!roll) { alert("Please enter your roll number."); return false; }
 
         var btn = document.getElementById("submit-btn");
@@ -189,6 +190,13 @@
         btn.disabled = true;
         btnText.textContent = "Submitting…";
         spinner.style.display = "block";
+
+        console.log("[DEBUG] Form submitting with data:", {
+            roll: roll,
+            subject_id: document.querySelector("input[name='subject_id']").value,
+            session_id: document.querySelector("input[name='session_id']").value,
+            device_token: document.querySelector("input[name='device_token']").value.substring(0, 20) + "..."
+        });
 
         return true; // allow form to POST normally
     }

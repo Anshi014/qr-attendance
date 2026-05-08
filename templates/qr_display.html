@@ -209,16 +209,33 @@
     //        so polling uses the updated session_id after a QR refresh.
     function updateScanCount() {
         var sid = document.getElementById("session-id-text").textContent.trim();
-        fetch("/scan_count/" + subjectId + "/" + encodeURIComponent(sid))
-            .then(function(r) { return r.ok ? r.json() : null; })
+        var url = "/scan_count/" + subjectId + "/" + encodeURIComponent(sid);
+        console.log("[DEBUG] Fetching scan count from:", url);
+        
+        fetch(url, { credentials: "same-origin" })
+            .then(function(r) {
+                console.log("[DEBUG] Response status:", r.status, "ok:", r.ok);
+                if (!r.ok) {
+                    console.error("[ERROR] Fetch returned status", r.status);
+                    return null;
+                }
+                return r.json();
+            })
             .then(function(data) {
+                console.log("[DEBUG] Received data:", data);
                 if (data && typeof data.count !== "undefined") {
                     var badge = document.getElementById("scan-count");
-                    badge.textContent = "✅ " + data.count +
+                    var countText = "✅ " + data.count +
                         " student" + (data.count !== 1 ? "s" : "") + " scanned this session";
+                    badge.textContent = countText;
+                    console.log("[DEBUG] Updated badge:", countText);
+                } else {
+                    console.error("[ERROR] Invalid data format:", data);
                 }
             })
-            .catch(function() {}); // non-critical
+            .catch(function(err) {
+                console.error("[ERROR] Fetch failed:", err);
+            });
     }
     updateScanCount();
     setInterval(updateScanCount, 10000);

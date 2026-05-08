@@ -1,4 +1,5 @@
 import pg8000.native
+import sqlite3
 from datetime import datetime
 import pandas as pd
 import os
@@ -6,8 +7,17 @@ import re
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql://postgres:Anshi_01%40Bharti@db.sorxdhxzwtcmipwecuph.supabase.co:6543/postgres"
+    ""  # Use SQLite locally by default
 )
+
+# ── Database type detection ──────────────────────────────────────────────
+USE_SQLITE = not DATABASE_URL or os.environ.get("USE_SQLITE", "").lower() in ("1", "true", "yes")
+SQLITE_DB = os.environ.get("SQLITE_DB_PATH", "attendance.db")
+
+if USE_SQLITE:
+    print("[INFO] Using SQLite for database (local development mode)", flush=True)
+else:
+    print("[INFO] Using PostgreSQL for database (production mode)", flush=True)
 
 def _parse_url(url):
     """Parse postgresql://user:pass@host:port/dbname"""
@@ -24,17 +34,61 @@ def _parse_url(url):
         "database": m.group(5),
     }
 
+class SQLiteConnection:
+    """Wrapper to make SQLite behave like pg8000 connection"""
+    def __init__(self, db_path):
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        
+    def run(self, query, **kwargs):
+        """Execute query and return results like pg8000"""
+        # Convert PostgreSQL :param syntax to SQLite ?
+        sql = query
+        params = []
+        
+        # Find all :param placeholders in order
+        import re
+        placeholders = re.findall(r':(\w+)', sql)
+        
+        # Build params list in order of appearance
+        for placeholder in placeholders:
+            if placeholder in kwargs:
+                params.append(kwargs[placeholder])
+            else:
+                params.append(None)
+        
+        # Replace :param with ?
+        sql = re.sub(r':\w+', '?', sql)
+        
+        c = self.conn.cursor()
+        if params:
+            c.execute(sql, params)
+        else:
+            c.execute(sql)
+        self.conn.commit()
+        
+        # Return results as list of tuples (like pg8000)
+        results = c.fetchall()
+        return [tuple(row) for row in results]
+    
+    def close(self):
+        self.conn.close()
+
 def get_db():
-    p = _parse_url(DATABASE_URL)
-    conn = pg8000.native.Connection(
-        user=p["user"],
-        password=p["password"],
-        host=p["host"],
-        port=p["port"],
-        database=p["database"],
-        ssl_context=True,
-    )
-    return conn
+    """Get database connection (SQLite or PostgreSQL)"""
+    if USE_SQLITE:
+        return SQLiteConnection(SQLITE_DB)
+    else:
+        p = _parse_url(DATABASE_URL)
+        conn = pg8000.native.Connection(
+            user=p["user"],
+            password=p["password"],
+            host=p["host"],
+            port=p["port"],
+            database=p["database"],
+            ssl_context=True,
+        )
+        return conn
 
 
 # ══════════════════════════════════════════
@@ -42,101 +96,184 @@ def get_db():
 # ══════════════════════════════════════════
 def init_db():
     conn = get_db()
+    
+    if USE_SQLITE:
+        # SQLite schema
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL,
+                full_name TEXT,
+                class_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                department TEXT,
+                incharge_id INTEGER
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS subjects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                class_id INTEGER NOT NULL,
+                teacher_id INTEGER,
+                UNIQUE(name, class_id)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS students (
+                roll TEXT PRIMARY KEY,
+                name TEXT,
+                class_id INTEGER
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id INTEGER,
+                subject_name TEXT,
+                class_id INTEGER,
+                session_id TEXT,
+                roll TEXT,
+                name TEXT,
+                device_id TEXT,
+                ip_address TEXT,
+                timestamp TEXT,
+                UNIQUE(session_id, roll)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS session_ip_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                ip_address TEXT,
+                UNIQUE(session_id, ip_address)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS session_tokens (
+                session_id TEXT NOT NULL,
+                device_token TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'issued',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL DEFAULT (datetime('now', '+24 hours')),
+                PRIMARY KEY (session_id, device_token)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS subject_device_log (
+                subject_id INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (subject_id, device_id)
+            )
+        """)
+    else:
+        # PostgreSQL schema
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('coordinator','incharge','teacher')),
+                full_name TEXT,
+                class_id INTEGER,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                department TEXT,
+                incharge_id INTEGER
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS subjects (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                class_id INTEGER NOT NULL,
+                teacher_id INTEGER,
+                UNIQUE(name, class_id)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS students (
+                roll TEXT PRIMARY KEY,
+                name TEXT,
+                class_id INTEGER
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                id SERIAL PRIMARY KEY,
+                subject_id INTEGER,
+                subject_name TEXT,
+                class_id INTEGER,
+                session_id TEXT,
+                roll TEXT,
+                name TEXT,
+                device_id TEXT,
+                ip_address TEXT,
+                timestamp TEXT,
+                UNIQUE(session_id, roll)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS session_ip_log (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT,
+                ip_address TEXT,
+                UNIQUE(session_id, ip_address)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS session_tokens (
+                session_id TEXT NOT NULL,
+                device_token TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'issued'
+                       CHECK(status IN ('issued','used')),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                expires_at TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+                PRIMARY KEY (session_id, device_token)
+            )
+        """)
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS subject_device_log (
+                subject_id INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (subject_id, device_id)
+            )
+        """)
 
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('coordinator','incharge','teacher')),
-            full_name TEXT,
-            class_id INTEGER,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS classes (
-            id SERIAL PRIMARY KEY,
-            name TEXT UNIQUE NOT NULL,
-            department TEXT,
-            incharge_id INTEGER
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS subjects (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            class_id INTEGER NOT NULL,
-            teacher_id INTEGER,
-            UNIQUE(name, class_id)
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS students (
-            roll TEXT PRIMARY KEY,
-            name TEXT,
-            class_id INTEGER
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS attendance (
-            id SERIAL PRIMARY KEY,
-            subject_id INTEGER,
-            subject_name TEXT,
-            class_id INTEGER,
-            session_id TEXT,
-            roll TEXT,
-            name TEXT,
-            device_id TEXT,
-            ip_address TEXT,
-            timestamp TEXT,
-            UNIQUE(session_id, roll)
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS session_ip_log (
-            id SERIAL PRIMARY KEY,
-            session_id TEXT,
-            ip_address TEXT,
-            UNIQUE(session_id, ip_address)
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS session_tokens (
-            session_id   TEXT NOT NULL,
-            device_token TEXT NOT NULL,
-            status       TEXT NOT NULL DEFAULT 'issued'
-                         CHECK(status IN ('issued','used')),
-            created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
-            expires_at   TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
-            PRIMARY KEY (session_id, device_token)
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS subject_device_log (
-            subject_id INTEGER NOT NULL,
-            device_id  TEXT NOT NULL,
-            timestamp  TIMESTAMP NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (subject_id, device_id)
-        )
-    """)
-
+    # Create indexes (same for both)
     conn.run("CREATE INDEX IF NOT EXISTS idx_att_subject   ON attendance(subject_id)")
     conn.run("CREATE INDEX IF NOT EXISTS idx_att_sess_roll ON attendance(session_id, roll)")
     conn.run("CREATE INDEX IF NOT EXISTS idx_att_sess_dev  ON attendance(session_id, device_id)")
     conn.run("CREATE INDEX IF NOT EXISTS idx_att_roll      ON attendance(roll)")
     conn.run("CREATE INDEX IF NOT EXISTS idx_students_cls  ON students(class_id)")
     conn.run("CREATE INDEX IF NOT EXISTS idx_tok_sess      ON session_tokens(session_id)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_tok_expires   ON session_tokens(expires_at)")
+    if not USE_SQLITE:
+        conn.run("CREATE INDEX IF NOT EXISTS idx_tok_expires   ON session_tokens(expires_at)")
     conn.run("CREATE INDEX IF NOT EXISTS idx_subdev        ON subject_device_log(subject_id, device_id)")
 
+    # Check if we need to seed default coordinator
     rows = conn.run("SELECT COUNT(*) FROM users")
     if rows[0][0] == 0:
         conn.run("""
             INSERT INTO users (username, password, role, full_name)
             VALUES (:u, :p, :r, :f)
         """, u="coordinator", p="coord123", r="coordinator", f="Coordinator")
-        print("Default coordinator created — username: coordinator  password: coord123")
+        print("Default coordinator created — username: coordinator  password: coord123", flush=True)
 
     conn.close()
 
@@ -416,7 +553,10 @@ def db_consume_token(session_id, device_token):
 
 def cleanup_expired_tokens():
     conn = get_db()
-    conn.run("DELETE FROM session_tokens WHERE expires_at < NOW()")
+    if USE_SQLITE:
+        conn.run("DELETE FROM session_tokens WHERE expires_at < datetime('now')")
+    else:
+        conn.run("DELETE FROM session_tokens WHERE expires_at < NOW()")
     conn.close()
     return 0
 
@@ -487,6 +627,7 @@ def mark_attendance(subject_id, subject_name, class_id, session_id,
     conn = get_db()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
+        print(f"[DEBUG] Inserting attendance: subject_id={subject_id}, session_id={session_id}, roll={roll.upper()}, timestamp={timestamp}", flush=True)
         conn.run("""
             INSERT INTO attendance
             (subject_id, subject_name, class_id, session_id, roll, name,
@@ -494,13 +635,15 @@ def mark_attendance(subject_id, subject_name, class_id, session_id,
             VALUES (:sid, :sn, :cid, :sess, :r, :n, :dev, :ip, :ts)
         """, sid=subject_id, sn=subject_name, cid=class_id, sess=session_id,
              r=roll.upper(), n=name, dev=device_id, ip=ip_address, ts=timestamp)
+        print(f"[DEBUG] Attendance inserted successfully", flush=True)
         conn.run(
             "INSERT INTO session_ip_log (session_id, ip_address) VALUES (:s, :i) ON CONFLICT DO NOTHING",
             s=session_id, i=ip_address
         )
         conn.close()
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] mark_attendance failed: {e}", flush=True)
         conn.close()
         return False
 
@@ -537,7 +680,7 @@ def get_attendance_summary(subject_id, class_id):
         "SELECT roll, name FROM students WHERE class_id=:c ORDER BY roll", c=class_id
     )
     records = conn.run("""
-        SELECT roll, session_id, DATE(timestamp::timestamp) AS date
+        SELECT roll, session_id, DATE(timestamp) AS date
         FROM attendance
         WHERE subject_id=:sid
         ORDER BY date, roll
@@ -642,7 +785,7 @@ def generate_report_for_subject(subject_id, class_id):
         "SELECT roll, name FROM students WHERE class_id = :c ORDER BY roll", c=class_id
     )
     records = conn.run("""
-        SELECT roll, DATE(timestamp::timestamp) AS date, session_id
+        SELECT roll, DATE(timestamp) AS date, session_id
         FROM attendance
         WHERE subject_id = :sid
         ORDER BY date, roll
