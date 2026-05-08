@@ -680,10 +680,10 @@ def get_attendance_summary(subject_id, class_id):
         "SELECT roll, name FROM students WHERE class_id=:c ORDER BY roll", c=class_id
     )
     records = conn.run("""
-        SELECT roll, session_id, SUBSTR("timestamp", 1, 10) AS date
+        SELECT roll, session_id, SUBSTR("timestamp", 1, 10) AS att_date
         FROM attendance
         WHERE subject_id=:sid
-        ORDER BY date, roll
+        ORDER BY att_date, roll
     """, sid=subject_id)
     conn.close()
 
@@ -785,10 +785,10 @@ def generate_report_for_subject(subject_id, class_id):
         "SELECT roll, name FROM students WHERE class_id = :c ORDER BY roll", c=class_id
     )
     records = conn.run("""
-        SELECT roll, SUBSTR("timestamp", 1, 10) AS date, session_id
+        SELECT roll, SUBSTR("timestamp", 1, 10) AS att_date, session_id
         FROM attendance
         WHERE subject_id = :sid
-        ORDER BY date, roll
+        ORDER BY att_date, roll
     """, sid=subject_id)
     conn.close()
 
