@@ -631,7 +631,7 @@ def report(subject_id):
 
     os.makedirs("exports", exist_ok=True)
     month_str = dt.now().strftime("%B_%Y")
-    filename  = f"{subject['class_name']}_{subject['name']}_{month_str}.xlsx"
+    filename  = f"{_safe_name(subject['class_name'])}_{_safe_name(subject['name'])}_{month_str}.xlsx"
     filepath  = os.path.join("exports", filename)
 
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
@@ -665,7 +665,7 @@ def report_class(class_id):
 
     class_name = cls_row[0][0] if cls_row else f"Class_{class_id}"
     os.makedirs("exports", exist_ok=True)
-    filename = f"{class_name}_Full_Report_{dt.now().strftime('%B_%Y')}.xlsx"
+    filename = f"{_safe_name(class_name)}_Full_Report_{dt.now().strftime('%B_%Y')}.xlsx"
     filepath = os.path.join("exports", filename)
 
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
@@ -692,7 +692,7 @@ def report_all():
     conn.close()
 
     os.makedirs("exports", exist_ok=True)
-    filename = f"All_Classes_Report_{dt.now().strftime('%B_%Y')}.xlsx"
+    filename = f"All_Classes_Report_{dt.now().strftime('%B_%Y')}.xlsx"  # no user data in this name
     filepath = os.path.join("exports", filename)
 
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
@@ -707,6 +707,11 @@ def report_all():
 
     _apply_colors(filepath)
     return redirect(url_for("download_export", filename=filename))
+
+
+def _safe_name(text):
+    """Strip characters that are unsafe in filenames on Linux/Windows."""
+    return "".join(c if c.isalnum() or c in " _-" else "_" for c in str(text)).strip()
 
 
 def _apply_colors(filepath, date_cols=None):
