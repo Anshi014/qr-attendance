@@ -671,7 +671,7 @@ def report_class(class_id):
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
         for sub_id, sub_name in subs:
             final_df, date_cols = generate_report_for_subject(sub_id, class_id)
-            sheet_name = sub_name[:31]
+            sheet_name = _safe_name(sub_name)[:31]
             final_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     _apply_colors(filepath)
@@ -701,7 +701,7 @@ def report_all():
             subs = conn.run("SELECT id, name FROM subjects WHERE class_id = :c", c=cls_id)
             conn.close()
             for sub_id, sub_name in subs:
-                sheet = f"{cls_name}-{sub_name}"[:31]
+                sheet = f"{_safe_name(cls_name)}-{_safe_name(sub_name)}"[:31]
                 final_df, _ = generate_report_for_subject(sub_id, cls_id)
                 final_df.to_excel(writer, sheet_name=sheet, index=False)
 
